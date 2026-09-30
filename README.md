@@ -94,6 +94,14 @@ python3 -m venv .venv
 .venv/bin/python main.py                            # Windows: run.bat
 ```
 
+### Uninstall
+
+- **Windows:** *Settings → Apps → Installed apps → JeopsokHeyou → Uninstall* (or run `Uninstall.exe` in the
+  install folder). Tick *Also delete my sessions and settings* to remove `%APPDATA%\JeopsokHeyou` too.
+  For the portable ZIP, delete the folder.
+- **macOS:** drag **JeopsokHeyou** from *Applications* to the Trash. To remove your data as well, delete
+  `~/Library/Application Support/JeopsokHeyou` and the *JeopsokHeyou* items in Keychain Access.
+
 ### Language
 
 The UI language follows the system language (English is used for anything other than Korean or
@@ -208,6 +216,32 @@ push; pushing a `v*` tag builds all installers and drafts a GitHub Release.
 - Port forwarding (local / remote / dynamic)
 - PuTTY `.ppk` key support
 - Mouse reporting for full-screen programs (htop, mc) and line reflow on resize
+
+<a id="code-signing-policy"></a>
+
+## ✍️ Code signing policy
+
+Windows releases are being prepared for signing through the
+[SignPath Foundation](https://signpath.org) free code signing program for open source projects
+(application pending — builds up to 1.0.0 are **not** signed).
+
+- Only JeopsokHeyou's own binaries are signed (`JeopsokHeyou.exe`, the installer and the uninstaller);
+  third-party libraries are shipped unmodified from their upstream projects.
+- Every release is built from a tagged commit by GitHub Actions, and every signing request is approved manually.
+
+**Team roles**
+
+| Role | Members |
+| --- | --- |
+| Committers and reviewers | [Seunghun Jun](https://github.com/seunghunjun) |
+| Approvers | [Seunghun Jun](https://github.com/seunghunjun) |
+
+### Privacy policy
+
+This program will not transfer any information to other networked systems unless specifically requested
+by the user or the person installing or operating it. JeopsokHeyou only connects to the SSH/SFTP servers
+you choose; it has no telemetry, analytics or update checks. The bundled third-party libraries
+(Qt/PySide6, paramiko, pyte, cryptography, …) do not collect or send data either.
 
 ## 📄 Licensing
 
