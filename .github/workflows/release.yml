@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows:
+    name: Build (Windows x64)
+    runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-lock.txt pyinstaller pillow
+
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          choco install nsis -y --no-progress
+          $makensis = @(
+            "${env:ProgramFiles(x86)}\NSIS\makensis.exe",
+            "$env:ProgramFiles\NSIS\makensis.exe"
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $makensis) { throw "makensis.exe not found after installing NSIS" }
+          "MAKENSIS=$makensis" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build release
+        run: python tools/build_release.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows-x64
+          if-no-files-found: error
+          path: |
+            dist/*-setup.exe
+            dist/*-win-x64.zip
+            dist/SHA256SUMS.txt
+
+  build-macos:
+    name: Build (macOS ${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14          # Apple Silicon
+            arch: arm64
+          - os: macos-15-intel    # Intel (replaces the retired macos-13 image)
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-lock.txt pyinstaller pillow
+
+      - name: Build release
+        run: python tools/build_release.py
+
+      - name: Check architecture
+        run: |
+          ls -l dist/*-macos-${{ matrix.arch }}.dmg
+          file dist/JeopsokHeyou.app/Contents/MacOS/JeopsokHeyou
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos-${{ matrix.arch }}
+          if-no-files-found: error
+          path: |
+            dist/*.dmg
+            dist/SHA256SUMS.txt
+
+  publish:
+    name: Draft GitHub Release
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: release-*
+
+      - name: Collect files and merge checksums
+        run: |
+          mkdir -p release
+          find artifacts -type f ! -name SHA256SUMS.txt -exec cp {} release/ \;
+          cat artifacts/*/SHA256SUMS.txt | sort -k2 > release/SHA256SUMS.txt
+          cd release
+          sha256sum --check SHA256SUMS.txt
+          ls -l
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: JeopsokHeyou ${{ github.ref_name }}
+          fail_on_unmatched_files: true
+          files: |
+            release/*-setup.exe
+            release/*-win-x64.zip
+            release/*-macos-arm64.dmg
+            release/*-macos-x86_64.dmg
+            release/SHA256SUMS.txt

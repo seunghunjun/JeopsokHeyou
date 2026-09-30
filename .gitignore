@@ -1,0 +1,46 @@
+# Python / virtualenv
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Build
+build/
+dist/
+*.spec
+!packaging/*.spec
+
+# Tests (work files)
+tests/.work/
+
+# IDE / OS
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Local configuration / user data — never commit
+.env
+.env.*
+settings.local.*
+sessions.json
+known_hosts
+sessions/
+
+# Credentials — never commit
+*.pem
+*.key
+*.ppk
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+id_ecdsa*

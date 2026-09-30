@@ -1,0 +1,140 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Copyright (C) 2026 Seunghun Jun
+"""Generate README screenshots and the demo animation (.github/media/).
+
+Usage: .venv\\Scripts\\python -m pip install pillow   (dev only, not needed to run the app)
+       .venv\\Scripts\\python tools\\make_readme_media.py
+
+To avoid capturing real server details, only tests/fake_server.py (127.0.0.1) and
+tests/fixtures/tabby-config.yaml (documentation-reserved addresses) are used.
+The UI language is forced to English for the screenshots.
+"""
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+OUT = ROOT / ".github" / "media"
+WORK = ROOT / "tests" / ".work" / "media"
+os.environ["APPDATA"] = str(WORK / "appdata")            # keep separate from user settings
+os.environ["JEOPSOKHEYOU_LANG"] = "en"                   # screenshots are in English
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+if sys.platform == "win32":
+    os.environ.setdefault("QT_QPA_FONTDIR", os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts"))
+shutil.rmtree(WORK, ignore_errors=True)
+sys.path.insert(0, str(ROOT))
+
+from PIL import Image  # noqa: E402
+from PySide6.QtCore import Qt  # noqa: E402
+from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
+
+SIZE = (1440, 860)
+
+
+def main() -> int:
+    OUT.mkdir(parents=True, exist_ok=True)
+    srv_root = WORK / "srv"
+    home = srv_root / "home" / "tester"
+    for d in ("conf", "logs/2026", "webapps/ROOT", "backup"):
+        (home / d).mkdir(parents=True, exist_ok=True)
+    for name, size in (("server.xml", 7421), ("web.xml", 1893), ("deploy.sh", 612), ("app.jar", 48213),
+                       ("notes.txt", 311), ("logo.png", 9120), ("application.yml", 954)):
+        (home / name).write_bytes(b"x" * size)
+    for name in ("catalina.out", "access.log", "error.log"):
+        (home / "logs" / name).write_bytes(b"x" * 20480)
+
+    srv = subprocess.Popen([sys.executable, str(ROOT / "tests" / "fake_server.py"), "2299", str(srv_root)],
+                           stdout=subprocess.PIPE)
+    srv.stdout.readline()
+    app = QApplication([])
+    QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+    from jeopsokheyou import config, i18n
+    from jeopsokheyou.config import Session
+    from jeopsokheyou.mainwindow import MainWindow, apply_dark_theme
+    apply_dark_theme(app)
+
+    def pump(sec: float = 0.3, cond=None):
+        end = time.time() + sec
+        while time.time() < end:
+            app.processEvents()
+            time.sleep(0.02)
+            if cond and cond():
+                return True
+        return cond is None
+
+    frames: list[Image.Image] = []
+
+    def shot(widget, name: str | None = None, frame: bool = True):
+        pump(0.4)
+        path = WORK / "tmp.png"
+        widget.grab().save(str(path))
+        img = Image.open(path).convert("RGB")
+        if name:
+            img.save(OUT / name, optimize=True)
+        if frame:
+            frames.append(img.copy())
+        return img
+
+    i18n.set_language("en")
+    w = MainWindow()
+    w.resize(*SIZE)
+    w.show()
+    w.store.sessions += config.import_tabby_sessions(ROOT / "tests" / "fixtures" / "tabby-config.yaml")
+    demo = Session(host="127.0.0.1", port=2299, user="tester", name="web-01", group="Development")
+    w.store.sessions.insert(0, demo)
+    w.store.save()
+    w.settings["recent"] = [demo.id]
+    w.apply_appearance(mode="light", ui_font="default")
+    shot(w, "welcome.png")
+
+    w.open_session(demo, "pw")
+    tab = w.current_tab()
+    pane = tab.panes[0]
+    pump(15, lambda: tab.state == "connected" and pane._inject_state == "done"
+         and tab.explorer.tree.topLevelItemCount() > 3)
+    pane.feed(b"ls --color\r\n\x1b[1;34mbackup\x1b[0m  \x1b[1;34mconf\x1b[0m  \x1b[1;34mlogs\x1b[0m  "
+              b"\x1b[1;34mwebapps\x1b[0m  app.jar  application.yml  \x1b[32mdeploy.sh\x1b[0m  server.xml\r\n"
+              b"tester:/home/tester$ ")
+    shot(w, "main-light.png")
+
+    # cd in the terminal → the explorer follows
+    pane.send_text("cd logs\r")
+    pane._note_user_input("\r")
+    pump(8, lambda: tab.explorer.cwd.endswith("/logs"))
+    shot(w, "sync.png")
+
+    tab.split_pane(Qt.Orientation.Horizontal)
+    tab.split_pane(Qt.Orientation.Vertical)
+    pump(15, lambda: all(p._inject_state == "done" for p in tab.panes))
+    for p in tab.panes[1:]:
+        p.feed(b"uptime\r\n 12:04:11 up 41 days,  3:12,  2 users,  load average: 0.08, 0.05, 0.01\r\n"
+               b"tester:/home/tester$ ")
+    shot(w, "split-panes.png")
+
+    w.apply_appearance(mode="dark")
+    pump(8, lambda: tab.explorer.tree.topLevelItemCount() > 0)
+    shot(w, "main-dark.png")
+
+    # close-up of the sidebar (groups)
+    side = shot(w.sessions_dock, None, frame=False)
+    side.save(OUT / "sidebar-dark.png", optimize=True)
+    w.apply_appearance(mode="light")
+
+    # demo animation (webp)
+    demo_frames = [f.resize((1100, int(1100 * f.height / f.width)), Image.LANCZOS) for f in frames]
+    demo_frames[0].save(OUT / "demo.webp", save_all=True, append_images=demo_frames[1:],
+                        duration=[1800, 1800, 2200, 2200, 2200], loop=0, quality=82, method=6)
+    w.close()
+    subprocess.run(["taskkill", "/F", "/T", "/PID", str(srv.pid)], capture_output=True) if sys.platform == "win32" else srv.kill()
+    for f in sorted(OUT.iterdir()):
+        print(f"{f.name:22} {f.stat().st_size // 1024} KB")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
