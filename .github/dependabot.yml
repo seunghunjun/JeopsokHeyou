@@ -4,6 +4,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      # requirements-lock.txt pins cryptography twice (Intel Macs stay on an older release because
+      # newer ones ship no Intel-macOS wheels). Dependabot cannot update such split pins correctly,
+      # so cryptography is bumped by hand; Dependabot security alerts still cover it.
+      - dependency-name: "cryptography"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
