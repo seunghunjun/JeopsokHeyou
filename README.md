@@ -36,7 +36,7 @@ No account required. Free and open source (GPL-3.0).
 - **✏️ Edit remote files locally** — double-click to open in your usual app; save and JeopsokHeyou offers to upload the change (only when the content really changed). "Open with…" is built in.
 - **🪟 Tabs & split panes** — split left/right or top/bottom on the same connection, close any pane with one click.
 - **📁 Sessions & groups** — search, drag sessions between groups, collapse groups, recent-session cards on the start page.
-- **📥 One-click import** — bring your sessions over from **PuTTY** and **Tabby** (including Tabby groups).
+- **📥 One-click import** — bring your sessions over from **PuTTY**, **Tabby** and **MobaXterm** (folders and groups included).
 - **⏱️ Idle auto-disconnect** — per session or global, with a one-minute warning; never disconnects during a transfer.
 - **🛡️ Safe by default** — host-key verification (trust on first use, block on mismatch), passwords not saved unless you ask (and then kept in Windows DPAPI or the macOS Keychain), private keys referenced by path only.
 - **🎨 Finder-style UI** — light and dark themes, crisp vector icons, Korean handwriting font (Gaegu) as an option.
@@ -119,7 +119,7 @@ Japanese). Change it in **View → Settings → Language**, or start with `--lan
 | **Terminal follows explorer** | ✅ | ❌ | ? | ? |
 | **Drag & drop to Windows Explorer** | ✅ | ❌ | ? | ✅ |
 | **Edit remote file → re-upload** | ✅ | ❌ | ? | ✅ |
-| **Import PuTTY / Tabby sessions** | ✅ / ✅ | — | ? | ? |
+| **Import PuTTY / Tabby / MobaXterm sessions** | ✅ / ✅ / ✅ | — | ? | ? |
 | **Idle auto-disconnect** | ✅ | ? | ? | ? |
 | **Host-key verification** | ✅ | ✅ | ✅ | ✅ |
 | **Saved passwords** | 🟡 optional (DPAPI / Keychain) | ❌ by design | ✅ vault | ✅ master password |
@@ -208,7 +208,7 @@ push; pushing a `v*` tag builds all installers and drafts a GitHub Release.
 | SSH / SFTP | paramiko (OpenSSH-compatible, modern algorithms only) |
 | Crypto | cryptography / OpenSSL, bcrypt, PyNaCl (via paramiko) |
 | Secrets | Windows DPAPI (`CryptProtectData`) / macOS Keychain (`security`) |
-| Import | Windows registry (PuTTY), PyYAML (Tabby) |
+| Import | Windows registry / `~/.putty` (PuTTY), PyYAML (Tabby), `MobaXterm.ini` / `.mxtsessions` (MobaXterm) |
 
 ## 🗺️ Roadmap
 

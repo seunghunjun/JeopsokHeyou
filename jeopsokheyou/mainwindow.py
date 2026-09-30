@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QKeySequence
@@ -751,6 +752,7 @@ class MainWindow(QMainWindow):
         self._act(m, tr("Quick connect"), lambda: self.quick.setFocus(), "Ctrl+Shift+Q")
         self._act(m, tr("Import PuTTY sessions"), self.import_putty)
         self._act(m, tr("Import Tabby sessions"), self.import_tabby)
+        self._act(m, tr("Import MobaXterm sessions…"), self.import_mobaxterm)
         m.addSeparator()
         self._act(m, tr("Exit"), self.close)
 
@@ -974,6 +976,7 @@ class MainWindow(QMainWindow):
         m.addSeparator()
         m.addAction(tr("Import PuTTY sessions"), self.import_putty)
         m.addAction(tr("Import Tabby sessions"), self.import_tabby)
+        m.addAction(tr("Import MobaXterm sessions…"), self.import_mobaxterm)
         m.exec(self.session_tree.viewport().mapToGlobal(pos))
 
     def _groups(self):
@@ -1068,6 +1071,19 @@ class MainWindow(QMainWindow):
     def import_putty(self):
         self._import_sessions("PuTTY", config.import_putty_sessions(),
                               tr("PuTTY does not store passwords, so enter the password when you first connect."))
+
+    def import_mobaxterm(self):
+        from PySide6.QtWidgets import QFileDialog
+        found = config.mobaxterm_default_files()
+        start = str(found[0]) if found else str(Path.home())
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("Select a MobaXterm session file"), start,
+            tr("MobaXterm sessions (MobaXterm.ini *.mxtsessions)") + ";;" + tr("All files (*)"))
+        if not path:
+            return
+        self._import_sessions("MobaXterm", config.import_mobaxterm_sessions(Path(path)),
+                              tr("Passwords are kept in MobaXterm's own store and are not imported; "
+                                 "enter them when you first connect."))
 
     def import_tabby(self):
         if not config.TABBY_CONFIG.exists():

@@ -12,6 +12,7 @@ import base64
 import ctypes
 import ctypes.wintypes as wt
 import json
+import os
 import sys
 import subprocess
 import uuid
@@ -433,6 +434,97 @@ def import_tabby_sessions(path: Path = TABBY_CONFIG) -> list[Session]:
             auth="key" if key_path else "password",
             key_path=key_path,
         ))
+    return result
+
+
+# ---------------------------------------------------------------- MobaXterm
+def mobaxterm_default_files() -> list[Path]:
+    """Where MobaXterm (installer edition) usually keeps its settings; the portable edition keeps
+    MobaXterm.ini next to its .exe, and exports are *.mxtsessions — those are picked by the user."""
+    home = Path.home()
+    candidates = [home / "Documents" / "MobaXterm" / "MobaXterm.ini",
+                  home / "OneDrive" / "Documents" / "MobaXterm" / "MobaXterm.ini"]
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        candidates.append(Path(appdata) / "MobaXterm" / "MobaXterm.ini")
+    return [p for p in candidates if p.is_file()]
+
+
+def _read_text_any(path: Path) -> str:
+    """MobaXterm writes its .ini in the system ANSI code page; exports may be UTF-8."""
+    raw = path.read_bytes()
+    for enc in ("utf-8-sig", "mbcs", "cp949", "cp1252"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("latin-1")
+
+
+def _moba_key_path(fields: list[str]) -> str:
+    """Pick the private-key path out of a session's %-separated fields (position varies by version)."""
+    for f in fields:
+        low = f.lower()
+        if not f or ("\\" not in f and "/" not in f):
+            continue
+        if low.endswith((".ppk", ".pem", ".key")) or "id_rsa" in low or "id_ed25519" in low or "id_ecdsa" in low:
+            f = f.replace("_ProfileDir_", str(Path.home())).replace("_CurrentDrive_", Path.home().anchor.rstrip("\\/"))
+            return f
+    return ""
+
+
+def import_mobaxterm_sessions(path: Path) -> list[Session]:
+    r"""Read SSH sessions from MobaXterm.ini or an exported .mxtsessions file.
+
+    Bookmarks sections look like::
+
+        [Bookmarks_2]
+        SubRep=Azure\PRE
+        ImgNum=41
+        web01=#109#0%web01.example.com%22%admin%%-1%-1%...#MobaFont%10%...#0
+
+    ``#<icon>#<type>%<host>%<port>%<user>%...``; type 0 is SSH. SubRep is the folder, which becomes
+    the group. Passwords live in MobaXterm's own encrypted store and are not imported.
+    """
+    result: list[Session] = []
+    try:
+        text = _read_text_any(path)
+    except OSError:
+        return result
+    in_bookmarks = False
+    group = ""
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith("[") and line.endswith("]"):
+            in_bookmarks = line[1:-1].lower().startswith("bookmarks")
+            group = ""
+            continue
+        if not in_bookmarks or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        if key == "SubRep":
+            group = value.strip().replace("\\", " / ")
+            continue
+        if key == "ImgNum" or not value.startswith("#"):
+            continue
+        parts = value.split("#")
+        if len(parts) < 3:
+            continue
+        fields = parts[2].split("%")
+        if len(fields) < 4 or fields[0] != "0":      # 0 = SSH; RDP, Telnet, … are skipped
+            continue
+        host = fields[1].strip()
+        if not host:
+            continue
+        try:
+            port = int(fields[2] or 22)
+        except ValueError:
+            port = 22
+        key_path = _moba_key_path(fields[4:])
+        result.append(Session(name=key, host=host, port=port, user=fields[3].strip(),
+                              group=group or "MobaXterm",
+                              auth="key" if key_path else "password", key_path=key_path))
     return result
 
 
