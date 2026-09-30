@@ -450,10 +450,21 @@ def mobaxterm_default_files() -> list[Path]:
     return [p for p in candidates if p.is_file()]
 
 
+CJK_CODEPAGES = ("cp949", "cp932", "cp936", "cp950")
+
+
 def _read_text_any(path: Path) -> str:
-    """MobaXterm writes its .ini in the system ANSI code page; exports may be UTF-8."""
+    """MobaXterm writes its .ini in the ANSI code page of the PC that saved it; exports may be UTF-8.
+
+    The file may come from a PC with another language than this one, so after UTF-8 the Korean,
+    Japanese and Chinese code pages are tried (strictly — Western text with accents does not decode
+    in them) before falling back to the Western code page.
+    """
+    import locale
     raw = path.read_bytes()
-    for enc in ("utf-8-sig", "mbcs", "cp949", "cp1252"):
+    system = (locale.getpreferredencoding(False) or "").lower()
+    order = ["utf-8-sig"] + ([system] if system in CJK_CODEPAGES else []) + list(CJK_CODEPAGES) + ["cp1252"]
+    for enc in dict.fromkeys(order):
         try:
             return raw.decode(enc)
         except (UnicodeDecodeError, LookupError):
@@ -469,6 +480,8 @@ def _moba_key_path(fields: list[str]) -> str:
             continue
         if low.endswith((".ppk", ".pem", ".key")) or "id_rsa" in low or "id_ed25519" in low or "id_ecdsa" in low:
             f = f.replace("_ProfileDir_", str(Path.home())).replace("_CurrentDrive_", Path.home().anchor.rstrip("\\/"))
+            if not paths.IS_WINDOWS:
+                f = f.replace("\\", "/")   # MobaXterm stores Windows-style separators
             return f
     return ""
 

@@ -65,4 +65,30 @@ exp = config.import_mobaxterm_sessions(exp_path)
 check("UTF-8 export", len(exp) == 1 and exp[0].name == "日本サーバ" and exp[0].group == "Lab",
       [(s.name, s.group) for s in exp])
 check("missing file returns nothing", config.import_mobaxterm_sessions(Path(SP) / "nope.ini") == [])
+
+# A file saved on Korean Windows must also decode on a PC with a Western code page (e.g. CI runners)
+import locale  # noqa: E402
+real_pref = locale.getpreferredencoding
+locale.getpreferredencoding = lambda do_setlocale=True: "cp1252"
+try:
+    names = [s.name for s in config.import_mobaxterm_sessions(ini_path)]
+    check("Korean file decodes on a Western-code-page PC", KOREAN_NAME in names, names)
+    western = Path(SP) / "western.ini"
+    western_lines = ["[Bookmarks]", "SubRep=", "ImgNum=41", "café-server=#109#0%192.0.2.40%22%zoë%%", ""]
+    western.write_bytes("\r\n".join(western_lines).encode("cp1252"))
+    w = config.import_mobaxterm_sessions(western)
+    check("Western accented names still decode", [(x.name, x.user) for x in w] == [("café-server", "zoë")],
+          [(x.name, x.user) for x in w])
+finally:
+    locale.getpreferredencoding = real_pref
+
+# On macOS, Windows-style key paths are converted to POSIX separators
+real_win = config.paths.IS_WINDOWS
+config.paths.IS_WINDOWS = False
+try:
+    mac_web = {x.name: x for x in config.import_mobaxterm_sessions(ini_path)}["prod-web"]
+    check("key path uses '/' on macOS", "\\" not in mac_web.key_path and mac_web.key_path.endswith("/.ssh/id_ed25519"),
+          mac_web.key_path)
+finally:
+    config.paths.IS_WINDOWS = real_win
 print("DONE")
