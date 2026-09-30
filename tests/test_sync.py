@@ -89,11 +89,17 @@ ex.go_up()
 check("parent folder -> terminal", wait(lambda: p0.cwd == "/home/tester/logs"), p0.cwd)
 
 # 7) Split view: clicking another terminal moves the explorer to its location
+before_split = screen(p0)   # remember the text so we can check nothing was lost to a transient narrow size
 tab.split_pane(Qt.Orientation.Horizontal); p1 = tab.panes[1]
 wait(lambda: p1._inject_state == "done" and p1.at_prompt, 15)
 check("new split pane starts at home", p1.cwd == "/home/tester", p1.cwd)
 wait(lambda: False, 0.5)
-check("existing screen content kept after split", any("slow" in l for l in screen(p0)), screen(p0)[-4:])
+# Lines may only be cut at the pane's final width (no reflow) — never at a narrower,
+# transient width that existed for a moment while the splitter was being laid out.
+cols = p0.screen.columns
+expected = [l[:cols].rstrip() for l in before_split if l[:cols].strip()]
+check("existing screen content kept after split (up to the final width)", screen(p0)[-len(expected):] == expected,
+      (cols, screen(p0)[-4:], expected[-4:]))
 p0.setFocus(); tab._pane_focused(p0)
 check("select pane 1 -> explorer at logs", wait(lambda: ex.cwd == "/home/tester/logs"), ex.cwd)
 tab._pane_focused(p1)
