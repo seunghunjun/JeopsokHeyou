@@ -13,6 +13,8 @@ RequestExecutionLevel user
 !define APP_EXE "JeopsokHeyou.exe"
 !define PUBLISHER "Seunghun Jun"
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
+; Created by the running app (main.py) — lets the installer see that JeopsokHeyou is open
+!define RUN_MUTEX "JeopsokHeyou.Running"
 
 Name "${APP_NAME} ${VERSION}"
 OutFile "${OUT_FILE}"
@@ -61,6 +63,9 @@ LangString SecDesktop ${LANG_JAPANESE} "デスクトップのショートカッ�
 LangString SecUnData ${LANG_ENGLISH} "Also delete my sessions and settings"
 LangString SecUnData ${LANG_KOREAN} "세션과 설정도 함께 삭제"
 LangString SecUnData ${LANG_JAPANESE} "セッションと設定も削除する"
+LangString AppRunning ${LANG_ENGLISH} "JeopsokHeyou is running.$\r$\n$\r$\nClose every JeopsokHeyou window, then click Retry.$\r$\n(Open connections and port forwards will be closed.)"
+LangString AppRunning ${LANG_KOREAN} "JeopsokHeyou가 실행 중입니다.$\r$\n$\r$\n모든 JeopsokHeyou 창을 닫은 뒤 [다시 시도]를 누르세요.$\r$\n(열려 있는 접속과 포트 포워딩은 종료됩니다.)"
+LangString AppRunning ${LANG_JAPANESE} "JeopsokHeyou が実行中です。$\r$\n$\r$\nすべての JeopsokHeyou のウィンドウを閉じてから [再試行] を押してください。$\r$\n(開いている接続とポート転送は終了します。)"
 LangString DescApp ${LANG_ENGLISH} "The program files."
 LangString DescApp ${LANG_KOREAN} "프로그램 파일입니다."
 LangString DescApp ${LANG_JAPANESE} "プログラム本体のファイルです。"
@@ -68,8 +73,40 @@ LangString DescDesktop ${LANG_ENGLISH} "Put a JeopsokHeyou shortcut on the deskt
 LangString DescDesktop ${LANG_KOREAN} "바탕화면에 JeopsokHeyou 바로가기를 만듭니다."
 LangString DescDesktop ${LANG_JAPANESE} "デスクトップに JeopsokHeyou のショートカットを作成します。"
 
+; ---------------------------------------------------------------- running-app check
+; Two signals: the mutex the app creates (1.0.2 and later), and the installed exe being locked
+; (Windows keeps a running program's exe open, which also catches older versions without the mutex).
+!macro CHECK_RUNNING_FUNC un
+Function ${un}CheckRunning
+  retry:
+    StrCpy $R0 0
+    System::Call 'kernel32::OpenMutexW(i 0x00100000, i 0, w "${RUN_MUTEX}") p.r1'
+    StrCmp $1 0 check_file
+      System::Call 'kernel32::CloseHandle(p r1)'
+      StrCpy $R0 1
+      Goto decide
+  check_file:
+    IfFileExists "$INSTDIR\${APP_EXE}" 0 decide
+    ClearErrors
+    FileOpen $2 "$INSTDIR\${APP_EXE}" a
+    IfErrors 0 +3
+      StrCpy $R0 1
+      Goto decide
+    FileClose $2
+  decide:
+    StrCmp $R0 1 0 done
+    MessageBox MB_RETRYCANCEL|MB_ICONEXCLAMATION "$(AppRunning)" /SD IDCANCEL IDRETRY retry
+    Abort
+  done:
+FunctionEnd
+!macroend
+!insertmacro CHECK_RUNNING_FUNC ""
+!insertmacro CHECK_RUNNING_FUNC "un."
+
 Section "!$(SecApp)" SEC_APP
   SectionIn RO
+  ; The app may have been started while the wizard was open
+  Call CheckRunning
   ; Replace the previous version's bundled libraries instead of mixing old and new files
   RMDir /r "$INSTDIR\_internal"
   SetOutPath "$INSTDIR"
@@ -111,6 +148,7 @@ SectionEnd
 
 Function .onInit
   !insertmacro MUI_LANGDLL_DISPLAY
+  Call CheckRunning
 FunctionEnd
 
 ; ---------------------------------------------------------------- uninstaller
@@ -139,4 +177,5 @@ SectionEnd
 
 Function un.onInit
   !insertmacro MUI_UNGETLANGUAGE
+  Call un.CheckRunning
 FunctionEnd

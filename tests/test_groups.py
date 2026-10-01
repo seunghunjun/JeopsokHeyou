@@ -80,4 +80,27 @@ w.add_group(move_ids=[ida]); check("menu: new group and move", st.get(ida).group
 st.add_group("Empty group"); w.filter.setText("b")
 hidden = [tree.topLevelItem(i).isHidden() for i in range(tree.topLevelItemCount()) if tree.topLevelItem(i).data(0, GROUP_ROLE) == "Empty group"]
 check("groups without matches hidden while searching", hidden == [True])
-w.close(); print("DONE")
+w.close(); 
+# Subgroups are nested in the session list
+from jeopsokheyou.config import Session as _S  # noqa: E402
+st2 = w.store
+st2.upsert(_S(name="nested-db", host="192.0.2.70", group="Ops / DB"))
+w.reload_sessions()
+tree = w.session_tree
+ops = next((tree.topLevelItem(i) for i in range(tree.topLevelItemCount())
+            if tree.topLevelItem(i).data(0, GROUP_ROLE) == "Ops"), None)
+db = ops.child(0) if ops is not None and ops.childCount() else None
+check("subgroup nested under its parent in the session list", db is not None and db.text(0) == "DB"
+      and db.data(0, GROUP_ROLE) == "Ops / DB" and db.child(0).text(0) == "nested-db")
+st2.upsert(_S(name="ops-direct", host="192.0.2.71", group="Ops"))
+w.filter.clear()   # an earlier step left a search in the box
+w.reload_sessions()
+ops = next(tree.topLevelItem(i) for i in range(tree.topLevelItemCount()) if tree.topLevelItem(i).data(0, GROUP_ROLE) == "Ops")
+check("a group's own sessions come before its subgroups", [ops.child(i).text(0) for i in range(ops.childCount())]
+      == ["ops-direct", "DB"], [ops.child(i).text(0) for i in range(ops.childCount())])
+w.filter.setText("nested")
+ops = next((tree.topLevelItem(i) for i in range(tree.topLevelItemCount())
+            if tree.topLevelItem(i).data(0, GROUP_ROLE) == "Ops"), None)   # the list was redrawn
+check("search keeps the parent of a matching subgroup visible", ops is not None and not ops.isHidden())
+w.filter.clear()
+print("DONE")

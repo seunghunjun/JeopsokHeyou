@@ -16,6 +16,8 @@ from PySide6.QtWidgets import QApplication, QMessageBox
 from PySide6.QtCore import Qt
 app = QApplication([])
 QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
+from jeopsokheyou import explorer as _explorer  # noqa: E402
+_explorer.ask_overwrite = lambda *a, **k: "overwrite"   # files left by an earlier run would otherwise ask
 from jeopsokheyou.mainwindow import MainWindow, apply_dark_theme
 from jeopsokheyou.config import Session
 from jeopsokheyou.explorer import job_download

@@ -50,6 +50,10 @@ from jeopsokheyou.mainwindow import THEME_CHOICES, SessionTab  # noqa: E402
 tables = {label for _k, label in THEME_CHOICES} | {label for _m, label in IDLE_CHOICES} \
     | {v[0] for v in theme.UI_FONTS.values()} | {v[0] for v in icons.KINDS.values()} \
     | set(SessionTab.SYNC_MSG.values())
+from jeopsokheyou import forwarding, home, tunnels, vaultui  # noqa: E402
+tables |= set(forwarding.KIND_LABELS.values()) | set(tunnels.KIND_HINTS.values()) | set(tunnels.TunnelsPage.COLS) \
+    | {label for _m, label in vaultui.LOCK_CHOICES} | set(forwarding.VALIDATION_MESSAGES) \
+    | {tunnels.NO_SERVER_MESSAGE} | {label for _k, label, _i in home.PAGES}
 used |= tables
 
 for lang in ("ko", "ja"):
@@ -63,7 +67,8 @@ for lang in ("ko", "ja"):
     unused = sorted(set(cat) - used)
     check(f"{lang}: no stale entries", not unused, unused[:10])
 
-# No Korean left in code, tests, tools or docs (the language list in i18n.py is the only exception)
+# No Korean left in code, tests, tools or docs (exceptions: the language list in i18n.py and the
+# language links in README.md; README.ko.md / README.ja.md are the translated READMEs)
 offenders = []
 for folder in ("jeopsokheyou", "tests", "tools"):
     for dirpath, _dirs, files in os.walk(os.path.join(ROOT, folder)):
@@ -79,7 +84,9 @@ for folder in ("jeopsokheyou", "tests", "tools"):
 for f in ("README.md", "CONTRIBUTING.md", "SECURITY.md", "THIRD-PARTY-NOTICES.md", "LICENSE", "main.py", "run.bat"):
     p = os.path.join(ROOT, f)
     if os.path.exists(p):
-        offenders += [f"{f}:{i}" for i, line in enumerate(open(p, encoding="utf-8"), 1) if HANGUL.search(line)]
+        # README.md may name the translated READMEs in their own language (README.ko.md / README.ja.md)
+        offenders += [f"{f}:{i}" for i, line in enumerate(open(p, encoding="utf-8"), 1)
+                      if HANGUL.search(line) and "README.ko.md" not in line]
 check("no Korean outside the translation files", not offenders, offenders[:10])
 
 # Switching language really changes the text

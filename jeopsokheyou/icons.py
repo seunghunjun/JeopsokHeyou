@@ -38,6 +38,16 @@ LINE = {
     "server": '<rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01"/>',
     "bolt": '<path d="M13 3L5 13.5h6L10 21l8-10.5h-6z"/>',
     "close": '<path d="M7 7l10 10M17 7L7 17"/>',
+    "tunnel": '<path d="M4 8h11"/><path d="M12 5l3 3-3 3"/><path d="M20 16H9"/><path d="M12 13l-3 3 3 3"/>',
+    "key": '<circle cx="8" cy="15" r="4"/><path d="M11 12l8-8"/><path d="M16 7l2.5 2.5M14 9l2 2"/>',
+    "lock": '<rect x="5" y="10.5" width="14" height="10" rx="2.2"/><path d="M8 10.5V7.5a4 4 0 0 1 8 0v3"/>',
+    "search": '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/>',
+    "pencil": '<path d="M4 20l1-4.5L15.5 5a2 2 0 0 1 2.8 0l.7.7a2 2 0 0 1 0 2.8L8.5 19z"/><path d="M13.5 7l3.5 3.5"/>',
+    "folder": '<path d="M3.5 7A1.5 1.5 0 0 1 5 5.5h4l2 2h8A1.5 1.5 0 0 1 20.5 9v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>',
+    "code": '<path d="M8.5 7.5L4 12l4.5 4.5"/><path d="M15.5 7.5L20 12l-4.5 4.5"/><path d="M13 5.5l-2 13"/>',
+    "clock": '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
+    "gear": '<circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4L18 18M6 18l1.6-1.6M16.4 7.6L18 6"/>',
+    "shield": '<path d="M12 3.5l7 2.8v5.2c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V6.3z"/><path d="M9 12l2.2 2.2L15.5 10"/>',
 }
 
 FOLDER = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
@@ -172,3 +182,12 @@ def file(filename: str, link: bool = False) -> QIcon:
 def app_pixmap(path: str, size: int) -> QPixmap:
     pm = QIcon(path).pixmap(QSize(size, size))
     return pm
+
+
+def dot(color: str) -> QIcon:
+    """A small filled status dot."""
+    key = ("dot", color)
+    if key not in _cache:
+        _cache[key] = _icon_from_svg('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">'
+                                     f'<circle cx="12" cy="12" r="5" fill="{color}"/></svg>')
+    return _cache[key]

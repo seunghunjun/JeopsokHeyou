@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDia
                                QFileDialog, QFontComboBox, QFormLayout, QHBoxLayout, QLabel,
                                QLineEdit, QMessageBox, QPushButton, QSpinBox, QWidget)
 
-from . import paths
+from . import paths, vault
 from .config import Session
 from .i18n import tr
 
@@ -17,7 +17,8 @@ IDLE_CHOICES = ((0, "Off"), (10, "10 min"), (30, "30 min"), (60, "1 hour"), (120
 
 
 class SessionDialog(QDialog):
-    def __init__(self, session: Session | None = None, groups: list[str] | None = None, parent=None):
+    def __init__(self, session: Session | None = None, groups: list[str] | None = None, parent=None,
+                 sessions: list[Session] | None = None):
         super().__init__(parent)
         self.setWindowTitle(tr("Edit Session") if session else tr("New Session"))
         self.setMinimumWidth(460)
@@ -46,8 +47,11 @@ class SessionDialog(QDialog):
         self.password = QLineEdit(s.password)
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password.setPlaceholderText(tr("Leave empty to be asked when connecting"))
-        self.save_pw = QCheckBox(tr("Save password in the macOS Keychain") if paths.IS_MAC
-                                 else tr("Save password (encrypted with your Windows account)"))
+        if vault.enabled():
+            self.save_pw = QCheckBox(tr("Save password (encrypted with your master password)"))
+        else:
+            self.save_pw = QCheckBox(tr("Save password in the macOS Keychain") if paths.IS_MAC
+                                     else tr("Save password (encrypted with your Windows account)"))
         self.save_pw.setChecked(bool(s.password_enc))
 
         self.key_path = QLineEdit(s.key_path)
@@ -76,6 +80,17 @@ class SessionDialog(QDialog):
         self.idle.setCurrentIndex(max(0, self.idle.findData(s.idle_minutes)))
         self.follow = QCheckBox(tr("Sync explorer ↔ terminal location (bash/zsh)"))
         self.follow.setChecked(s.follow_cwd)
+        # Jump host (ProxyJump): any other saved session
+        self.jump = QComboBox()
+        self.jump.addItem(tr("None (connect directly)"), "")
+        for o in sorted(sessions or [], key=lambda x: (x.group.lower(), x.title().lower())):
+            if o.id != s.id:
+                self.jump.addItem((f"{o.group} / " if o.group else "") + o.title(), o.id)
+        if s.jump and self.jump.findData(s.jump) < 0:
+            self.jump.addItem(tr("(deleted session)"), s.jump)
+        self.jump.setCurrentIndex(max(0, self.jump.findData(s.jump)))
+        from .tunnels import ForwardListEditor
+        self.forwards = ForwardListEditor(s.forwards)
 
         form.addRow(tr("Name"), self.name)
         form.addRow(tr("Group"), self.group)
@@ -91,6 +106,8 @@ class SessionDialog(QDialog):
         form.addRow(tr("Character encoding"), self.encoding)
         form.addRow(tr("Auto disconnect"), self.idle)
         form.addRow("", self.follow)
+        form.addRow(tr("Jump host"), self.jump)
+        form.addRow(tr("Port forwarding"), self.forwards)
         self._key_widgets = (key_row, self.passphrase)
         self._form = form
 
@@ -132,6 +149,8 @@ class SessionDialog(QDialog):
         s.encoding = self.encoding.currentText().strip() or "utf-8"
         s.follow_cwd = self.follow.isChecked()
         s.idle_minutes = int(self.idle.currentData())
+        s.jump = self.jump.currentData() or ""
+        s.forwards = self.forwards.values()
         # Unsaved passwords are kept for this connection only
         self.transient_password = self.password.text()
         self.transient_passphrase = self.passphrase.text()
@@ -199,6 +218,10 @@ class SettingsDialog(QDialog):
                                 "(warns 1 minute before).\n"
                                 "Each session can override this in Edit Session."))
         form.addRow(tr("Auto disconnect"), self.idle)
+        if parent is not None and hasattr(parent, "open_vault_settings"):
+            mp = QPushButton(tr("Master password…"))
+            mp.clicked.connect(parent.open_vault_settings)
+            form.addRow(tr("Security"), mp)
         note = QLabel(tr("The UI font applies to menus, lists and buttons. "
                          "The terminal can only use monospaced fonts."))
         note.setObjectName("Muted")

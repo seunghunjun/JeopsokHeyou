@@ -20,6 +20,18 @@ class UnknownHostKey(Exception):
         self.key = key
 
 
+class JumpFailed(Exception):
+    def __init__(self, via: str, target: str, error: Exception):
+        super().__init__(f"{via} → {target}: {error}")
+        self.via, self.target = via, target
+
+
+class JumpAuthFailed(Exception):
+    def __init__(self, via: str):
+        super().__init__(via)
+        self.via = via
+
+
 class _AskPolicy(paramiko.MissingHostKeyPolicy):
     """Reject unknown host keys and ask the UI for confirmation (same behavior as PuTTY)."""
 
@@ -42,38 +54,80 @@ def trust_host_key(hostname: str, key: paramiko.PKey) -> None:
 class SshConnection:
     """SSH connection for one session. Multiple shell channels/SFTP can be opened on the same transport."""
 
-    def __init__(self, session: Session, password: str = "", passphrase: str = ""):
+    def __init__(self, session: Session, password: str = "", passphrase: str = "",
+                 jumps: list[tuple[Session, str, str]] | None = None):
+        """``jumps``: (session, password, passphrase) of the jump hosts to go through, outermost first."""
         self.session = session
         self._password = password
         self._passphrase = passphrase
+        self._jumps = list(jumps or [])
         self.client: paramiko.SSHClient | None = None
+        self._jump_clients: list[paramiko.SSHClient] = []
         self._lock = threading.Lock()
 
-    # Called from a worker thread
-    def connect(self) -> None:
-        s = self.session
+    @staticmethod
+    def _connect_one(s: Session, password: str, passphrase: str, sock=None) -> paramiko.SSHClient:
         client = paramiko.SSHClient()
         if KNOWN_HOSTS_FILE.exists():
             client.load_host_keys(str(KNOWN_HOSTS_FILE))
         client.set_missing_host_key_policy(_AskPolicy())
         kwargs = dict(
             hostname=s.host, port=int(s.port or 22), username=s.user or None,
-            timeout=10, banner_timeout=15, auth_timeout=20,
+            timeout=10, banner_timeout=15, auth_timeout=20, sock=sock,
         )
         if s.auth == "key":
             kwargs.update(
                 key_filename=s.key_path or None,
-                passphrase=self._passphrase or None,
-                password=self._password or None,
+                passphrase=passphrase or None,
+                password=password or None,
                 allow_agent=True, look_for_keys=not s.key_path,
             )
         else:
-            kwargs.update(password=self._password, allow_agent=False, look_for_keys=False)
+            kwargs.update(password=password, allow_agent=False, look_for_keys=False)
         client.connect(**kwargs)
         t = client.get_transport()
         if t is not None:
             t.set_keepalive(30)
-        self.client = client
+        return client
+
+    # Called from a worker thread
+    def connect(self) -> None:
+        self._close_jumps()
+        sock = None
+        chain = self._jumps + [(self.session, self._password, self._passphrase)]
+        try:
+            for i, (s, pw, pp) in enumerate(chain):
+                try:
+                    client = self._connect_one(s, pw, pp, sock)
+                except paramiko.AuthenticationException as e:
+                    if i < len(chain) - 1:
+                        raise JumpAuthFailed(s.title()) from e
+                    raise
+                if i == len(chain) - 1:
+                    self.client = client
+                    break
+                self._jump_clients.append(client)
+                nxt = chain[i + 1][0]
+                try:
+                    sock = client.get_transport().open_channel(
+                        "direct-tcpip", (nxt.host, int(nxt.port or 22)), ("127.0.0.1", 0), timeout=15)
+                except paramiko.ChannelException as e:
+                    raise JumpFailed(s.title(), nxt.host, e) from e
+        except Exception:
+            self._close_jumps()
+            raise
+
+    @property
+    def transport(self) -> paramiko.Transport | None:
+        return self.client.get_transport() if self.client else None
+
+    def _close_jumps(self) -> None:
+        for c in reversed(self._jump_clients):
+            try:
+                c.close()
+            except Exception:
+                pass
+        self._jump_clients = []
 
     @property
     def alive(self) -> bool:
@@ -97,6 +151,7 @@ class SshConnection:
             except Exception:
                 pass
             self.client = None
+        self._close_jumps()
 
 
 class ConnectWorker(QThread):
@@ -124,6 +179,11 @@ class ConnectWorker(QThread):
             ))
         except paramiko.AuthenticationException as e:
             self.auth_failed.emit(tr("Authentication failed: {error}", error=e))
+        except JumpAuthFailed as e:
+            self.failed.emit(tr("Authentication to the jump host {via} failed. "
+                                "Check the password or key saved in that session.", via=e.via))
+        except JumpFailed as e:
+            self.failed.emit(tr("The jump host {via} could not reach {target}.", via=e.via, target=e.target))
         except (socket.timeout, TimeoutError):
             self.failed.emit(tr("Connection timed out"))
         except Exception as e:

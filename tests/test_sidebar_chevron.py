@@ -17,6 +17,7 @@ from jeopsokheyou.mainwindow import MainWindow, apply_dark_theme, GROUP_ROLE
 apply_dark_theme(app)
 def check(n, ok, x=""): print(("PASS " if ok else "FAIL ") + n, x)
 w = MainWindow(); w.resize(900, 520); w.show()
+w.sessions_dock.show()   # the session list panel is hidden by default (Home tab has Hosts)
 w.store.sessions += config.import_tabby_sessions(REAL); w.store.save(); w.reload_sessions()
 for _ in range(20): app.processEvents()
 tree = w.session_tree

@@ -13,6 +13,45 @@ class Srv(paramiko.ServerInterface):
     def check_channel_shell_request(self, ch):
         threading.Thread(target=shell, args=(ch,), daemon=True).start(); return True
     def check_channel_window_change_request(self, *a): return True
+    # Port forwarding: direct-tcpip (-L, -D, jump hosts) and tcpip-forward (-R)
+    def check_channel_direct_tcpip_request(self, chanid, origin, destination):
+        PENDING[chanid] = destination; return paramiko.OPEN_SUCCEEDED
+    def check_port_forward_request(self, address, port):
+        ls = socket.socket(); ls.bind(("127.0.0.1", port)); ls.listen(8)
+        bound = ls.getsockname()[1]; self.listeners[bound] = ls
+        def loop():
+            while True:
+                try: c, addr = ls.accept()
+                except OSError: return
+                ch = self.transport.open_forwarded_tcpip_channel(addr, (address, bound))
+                threading.Thread(target=bridge, args=(c, ch), daemon=True).start()
+        threading.Thread(target=loop, daemon=True).start()
+        return bound
+    def cancel_port_forward_request(self, address, port):
+        ls = self.listeners.pop(port, None)
+        if ls: ls.close()
+PENDING = {}
+def bridge(a, b):
+    def one(x, y):
+        try:
+            while True:
+                d = x.recv(32768)
+                if not d: break
+                y.sendall(d)
+        except Exception: pass
+        for z in (x, y):
+            try: z.close()
+            except Exception: pass
+    threading.Thread(target=one, args=(a, b), daemon=True).start(); one(b, a)
+def accept_channels(t):
+    while t.is_active():
+        ch = t.accept(1)
+        if ch is None: continue
+        dest = PENDING.pop(ch.get_id(), None)
+        if dest is None: continue          # session channels are handled by the shell handler
+        try: c = socket.create_connection(dest, timeout=5)
+        except OSError: ch.close(); continue
+        threading.Thread(target=bridge, args=(c, ch), daemon=True).start()
 def shell(ch):
     cwd = "/home/tester"
     ch.send("Welcome to demo server\r\n$ ")
@@ -70,7 +109,9 @@ def serve(sock, key):
         c, _ = sock.accept()
         t = paramiko.Transport(c); t.add_server_key(key)
         t.set_subsystem_handler("sftp", SFTPServer, S)
-        t.start_server(server=Srv())
+        srv = Srv(); srv.transport = t; srv.listeners = {}
+        t.start_server(server=srv)
+        threading.Thread(target=accept_channels, args=(t,), daemon=True).start()
 os.makedirs(os.path.join(ROOT, "home/tester/docs"), exist_ok=True)
 open(os.path.join(ROOT, "home/tester/hello.txt"), "w", encoding="utf-8").write("hello 日本語\n")
 key = paramiko.RSAKey.generate(2048)

@@ -91,4 +91,41 @@ try:
           mac_web.key_path)
 finally:
     config.paths.IS_WINDOWS = real_win
+
+# MobaSSHTunnel list ([PortForwarding] in the same file), as written by MobaXterm 26.5
+from jeopsokheyou.config import SessionStore  # noqa: E402
+from jeopsokheyou.tunnels import TunnelStore, import_mobaxterm_tunnels, parse_mobaxterm_tunnels  # noqa: E402
+tun_ini = Path(SP) / "tunnels.ini"
+BS = chr(92)   # backslash, as in MobaXterm's Windows key paths
+tun_ini.write_text((chr(13) + chr(10)).join([
+    "[Bookmarks]", "SubRep=", "ImgNum=42",
+    "[PortForwarding]",
+    "0000.tun-local=Local;user1@192.0.2.1:2201;192.0.2.91:3306;11111;0;No SSH key selected;0.0.0.0;No proxy selected;0",
+    "0001.=Remote;user2@192.0.2.2:2202;192.0.2.92:8080;22222;0;No SSH key selected;0.0.0.0;No proxy selected;0",
+    f"0002.=Dynamic;user3@192.0.2.3:2203;-:0;33333;0;_ProfileDir_{BS}.ssh{BS}id_ed25519;127.0.0.1;No proxy selected;0",
+    "0003.=Telnet;broken",
+    "", "[Misc]", "0004.=Local;user9@192.0.2.9:22;192.0.2.9:1;1;0;x;0.0.0.0;y;0",
+]), encoding="utf-8")
+tuns = parse_mobaxterm_tunnels(tun_ini)
+check("three tunnels parsed (others ignored)", len(tuns) == 3, len(tuns))
+t0, t1, t2 = tuns
+check("local tunnel", t0["name"] == "tun-local" and (t0["user"], t0["host"], t0["port"]) == ("user1", "192.0.2.1", 2201)
+      and t0["forward"] == {"kind": "L", "bind_host": "127.0.0.1", "bind_port": 11111, "dest_host": "192.0.2.91", "dest_port": 3306},
+      t0)
+check("MobaXterm's all-interfaces default becomes this PC only (local/dynamic)",
+      t0["forward"]["bind_host"] == "127.0.0.1")
+check("remote tunnel keeps the server-side listen address", t1["forward"]["bind_host"] == "0.0.0.0")
+check("remote tunnel", t1["forward"]["kind"] == "R" and t1["forward"]["bind_port"] == 22222
+      and (t1["forward"]["dest_host"], t1["forward"]["dest_port"]) == ("192.0.2.92", 8080), t1)
+check("dynamic tunnel with key and listen address", t2["forward"]["kind"] == "D" and t2["forward"]["bind_host"] == "127.0.0.1"
+      and t2["key_path"].endswith("id_ed25519") and "_ProfileDir_" not in t2["key_path"], t2)
+st, ts = SessionStore(), TunnelStore()
+added, dup, new_sessions = import_mobaxterm_tunnels(tun_ini, st, ts)
+check("tunnels and their SSH sessions added", (added, dup, new_sessions) == (3, 0, 3), (added, dup, new_sessions))
+check("unnamed tunnels get a readable name", ts.tunnels[1].name.startswith("R "), ts.tunnels[1].name)
+check("tunnel points at its session", st.get(ts.tunnels[0].session_id).host == "192.0.2.1")
+check("autostart off after import", not any(t.autostart for t in ts.tunnels))
+added, dup, new_sessions = import_mobaxterm_tunnels(tun_ini, st, ts)
+check("importing again adds nothing", (added, dup, new_sessions) == (0, 3, 0), (added, dup, new_sessions))
+check("saved to disk", len(TunnelStore().tunnels) == 3 and len(SessionStore().sessions) == 3)
 print("DONE")

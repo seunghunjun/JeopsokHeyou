@@ -149,7 +149,46 @@ def job_download(remote_paths: list[str], local_dir: str):
     return fn
 
 
-def job_upload(local_paths: list[str], remote_dir: str):
+def job_upload_check(local_paths: list[str], remote_dir: str):
+    """Before uploading: which of the dropped names already exist in the remote folder."""
+    def fn(sftp, w):
+        existing = []
+        for lp in local_paths:
+            name = os.path.basename(lp.rstrip("\\/"))
+            try:
+                st = sftp.stat(posixpath.join(remote_dir, name))
+            except OSError:
+                continue          # not there — nothing to overwrite
+            existing.append((name, stat.S_ISDIR(st.st_mode)))
+        return local_paths, remote_dir, existing
+    return fn
+
+
+def ask_overwrite(parent, existing: list[tuple[str, bool]], remote_dir: str) -> str:
+    """Ask what to do with names that already exist: "overwrite", "skip" or "cancel"."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Question)
+    box.setWindowTitle(tr("File already exists"))
+    names = [n + ("/" if is_dir else "") for n, is_dir in existing]
+    if len(existing) == 1:
+        box.setText(tr("'{name}' already exists in {folder}. Overwrite it?", name=names[0], folder=remote_dir))
+    else:
+        shown = "\n".join("  • " + n for n in names[:10]) + ("\n  …" if len(names) > 10 else "")
+        box.setText(tr("{n} items already exist in {folder}:", n=len(existing), folder=remote_dir) + "\n\n" + shown)
+    if any(is_dir for _n, is_dir in existing):
+        box.setInformativeText(tr("Existing folders are merged: files with the same name inside them are overwritten."))
+    over = box.addButton(tr("Overwrite") if len(existing) == 1 else tr("Overwrite all"), QMessageBox.ButtonRole.AcceptRole)
+    skip = box.addButton(tr("Skip") if len(existing) == 1 else tr("Skip existing"), QMessageBox.ButtonRole.ActionRole)
+    cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+    box.setDefaultButton(cancel)
+    box.exec()
+    clicked = box.clickedButton()
+    return "overwrite" if clicked is over else "skip" if clicked is skip else "cancel"
+
+
+def job_upload(local_paths: list[str], remote_dir: str, skip: set | None = None):
+    local_paths = [lp for lp in local_paths if os.path.basename(lp.rstrip("\\/")) not in (skip or set())]
+
     def fn(sftp, w):
         total = 0
         for lp in local_paths:
@@ -482,11 +521,16 @@ class SftpExplorer(QWidget):
         h = self.tree.header()
         h.setStretchLastSection(False)
         h.setMinimumSectionSize(40)
-        h.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
-        # secondary columns start at fixed widths (user-resizable) so the name column wins in narrow windows
-        for c, width in ((COL_DATE, 118), (COL_SIZE, 64), (COL_KIND, 96), (COL_PERM, 92)):
+        # Every column can be resized by dragging. Until the user does, the name column takes the free space;
+        # widths the user sets are remembered (all tabs, next start).
+        saved = self.settings.get("explorer_columns") or {}
+        self._cols_user_sized = bool(saved)
+        self._sizing = True
+        for c, width in ((COL_NAME, 200), (COL_DATE, 118), (COL_SIZE, 64), (COL_KIND, 96), (COL_PERM, 92)):
             h.setSectionResizeMode(c, QHeaderView.ResizeMode.Interactive)
-            h.resizeSection(c, width)
+            h.resizeSection(c, int(saved.get(str(c), width)))
+        self._sizing = False
+        h.sectionResized.connect(self._on_column_resized)
         # columns can be shown/hidden via header right-click (permissions column shown by default)
         h.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         h.customContextMenuRequested.connect(self._header_menu)
@@ -515,6 +559,31 @@ class SftpExplorer(QWidget):
         fl.addWidget(self.bar)
         fl.addWidget(self.cancel_btn)
         lay.addWidget(foot)
+
+    def _fit_name_column(self):
+        """Give the name column the free width (only while the user has not resized columns)."""
+        if self._cols_user_sized:
+            return
+        h = self.tree.header()
+        others = sum(h.sectionSize(c) for c in (COL_DATE, COL_SIZE, COL_KIND, COL_PERM) if not h.isSectionHidden(c))
+        self._sizing = True
+        h.resizeSection(COL_NAME, max(140, self.tree.viewport().width() - others))
+        self._sizing = False
+
+    def _on_column_resized(self, _idx, _old, _new):
+        if self._sizing:
+            return
+        self._cols_user_sized = True
+        h = self.tree.header()
+        self.settings["explorer_columns"] = {str(c): h.sectionSize(c) for c in range(h.count())}
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self._fit_name_column()
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        self._fit_name_column()
 
     def _header_menu(self, pos):
         h = self.tree.header()
@@ -626,6 +695,8 @@ class SftpExplorer(QWidget):
                 self.navigated.emit(path)
         elif tag == "download":
             self._done(tr("Download complete → {path}", path=payload))
+        elif tag == "upload_check":
+            self._upload_checked(*payload)
         elif tag == "upload":
             self._done(tr("Upload complete"))
             if payload == self.cwd:
@@ -664,7 +735,7 @@ class SftpExplorer(QWidget):
             self.info.setText(tr("Cancelled"))
             return
         self.info.setText(tr("Error: {msg}", msg=msg))
-        if tag in ("upload", "download", "reupload", "delete", "mkdir", "rename"):
+        if tag in ("upload", "upload_check", "download", "reupload", "delete", "mkdir", "rename"):
             QMessageBox.warning(self, tr("File operation failed"), msg)
 
     def _on_progress(self, label: str, done: int, total: int):
@@ -798,8 +869,23 @@ class SftpExplorer(QWidget):
             self.upload(files, self.cwd)
 
     def upload(self, local_paths: list[str], remote_dir: str):
-        if self.transfer and remote_dir:
-            self.transfer.submit("upload", job_upload(local_paths, remote_dir))
+        """Upload after checking for names that already exist in the remote folder (asks before overwriting)."""
+        if self.transfer and remote_dir and local_paths:
+            self.transfer.submit("upload_check", job_upload_check(local_paths, remote_dir))
+
+    def _upload_checked(self, local_paths: list[str], remote_dir: str, existing: list):
+        skip: set = set()
+        if existing:
+            choice = ask_overwrite(self, existing, remote_dir)
+            if choice == "cancel":
+                self.info.setText(tr("Upload cancelled"))
+                return
+            if choice == "skip":
+                skip = {n for n, _d in existing}
+        if len(skip) >= len(local_paths):
+            self.info.setText(tr("Nothing to upload"))
+            return
+        self.transfer.submit("upload", job_upload(local_paths, remote_dir, skip))
 
     def _on_dropped(self, paths: list, target):
         remote_dir = self.cwd

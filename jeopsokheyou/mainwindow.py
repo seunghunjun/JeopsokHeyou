@@ -18,8 +18,12 @@ from .config import Session, SessionStore
 from .dialogs import SessionDialog
 from .explorer import SftpExplorer, cleanup_temp, sh_quote
 from .i18n import tr
-from .ssh import ConnectWorker, ShellReader, SshConnection, trust_host_key
+from .ssh import ConnectWorker, ShellReader, SshConnection
 from .terminal import TerminalWidget, pick_font
+from . import __version__, forwarding, library, sshconfig, vault, vaultui
+from .home import HomeTab, SnippetPicker
+from .tunnels import (TunnelManager, ask_trust_host, error_text, import_mobaxterm_tunnels,
+                      jump_credentials)
 
 # Hook the shell (bash/zsh) so the terminal reports its current folder via OSC 7 on every cd.
 # The final printf doubles as the "injection done" marker and the initial location report.
@@ -218,6 +222,8 @@ class SessionTab(QWidget):
         self.state = "idle"
         self.last_activity = time.monotonic()
         self._close_reason = ""
+        self.forward_runners: list[forwarding.ForwardRunner] = []
+        self._jump_cache: dict = {}
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -377,6 +383,7 @@ class SessionTab(QWidget):
         self._close_reason = ""
         self.explorer.detach()
         self.explorer.info.setText(tr("Disconnected"))
+        self._stop_forwards()
         if self.conn:
             self.conn.close()
 
@@ -407,11 +414,18 @@ class SessionTab(QWidget):
             if not ok or not user.strip():
                 return
             s.user = user.strip()
+        jumps = jump_credentials(self, self.main.store, s, self._jump_cache)
+        if jumps is None:
+            self.state = "failed"
+            self._title()
+            return
         self.state = "connecting"
         self._title()
         pane = self.panes[0]
-        pane.write_local("\x1b[90m" + tr("Connecting to {target}…", target=f"{s.user}@{s.host}:{s.port}") + "\x1b[0m\n")
-        self.conn = SshConnection(s, self.password, self.passphrase)
+        via = " → ".join(j.title() for j, _pw, _pp in jumps)
+        pane.write_local("\x1b[90m" + tr("Connecting to {target}…", target=f"{s.user}@{s.host}:{s.port}")
+                         + (" (" + tr("via {hosts}", hosts=via) + ")" if via else "") + "\x1b[0m\n")
+        self.conn = SshConnection(s, self.password, self.passphrase, jumps)
         self.worker = ConnectWorker(self.conn)
         self.worker.ok.connect(self._on_ok)
         self.worker.failed.connect(self._on_failed)
@@ -474,8 +488,36 @@ class SessionTab(QWidget):
             return
         pane.setFocus()
         self.explorer.attach(self.conn, self.session.init_dir)
+        self._start_forwards()
+        try:
+            library.add_history(self.session)
+        except OSError:
+            pass
+
+    # ------------------------------------------------------------ port forwarding
+    def _start_forwards(self):
+        self._stop_forwards()
+        if not self.session.forwards or not self.conn or not self.conn.transport:
+            return
+        self.forward_runners = forwarding.start_all(self.session.forwards, self.conn.transport)
+        pane = self.panes[0]
+        for r in self.forward_runners:
+            rule = r.fwd.describe()
+            if r.fwd.kind == "R" and r.fwd.bind_port == 0:
+                rule += f" (:{r.bound_port})"
+            if r.running:
+                pane.write_local("\x1b[90m" + tr("Port forwarding {rule}", rule=rule) + " ✓\x1b[0m\r\n")
+            else:
+                pane.write_local("\x1b[33m" + tr("Port forwarding {rule} failed: {error}", rule=rule,
+                                                  error=error_text(r.error)) + "\x1b[0m\r\n")
+
+    def _stop_forwards(self):
+        for r in self.forward_runners:
+            r.stop()
+        self.forward_runners = []
 
     def _on_failed(self, msg: str):
+        self._jump_cache.clear()     # a typed jump-host password may have been wrong
         self.state = "failed"
         self._title()
         pane = self.panes[0]
@@ -492,20 +534,15 @@ class SessionTab(QWidget):
             self._on_failed(tr("Key authentication failed. Check the key file/passphrase."))
 
     def _on_unknown_host(self, hostname: str, key):
-        r = QMessageBox.question(
-            self, tr("First connection to server"),
-            tr("This server's host key is not registered.\n\n"
-               "Host: {host}\nKey type: {key_type}\nFingerprint: {fingerprint}\n\n"
-               "Trust it and connect? (You won't be asked again)",
-               host=hostname, key_type=key.get_name(), fingerprint=key.fingerprint))
+        trusted = ask_trust_host(self, hostname, key)
         self.state = "failed"
-        if r == QMessageBox.StandardButton.Yes:
-            trust_host_key(hostname, key)
+        if trusted:
             self.connect()
         else:
             self._on_failed(tr("Connection cancelled."))
 
     def shutdown(self):
+        self._stop_forwards()
         self.explorer.detach()
         for p in self.panes:
             p.close_channel()
@@ -576,7 +613,7 @@ class SessionTree(QTreeWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("JeopsokHeyou")
+        self.setWindowTitle(f"JeopsokHeyou {__version__}")
         self.resize(1400, 850)
         self.settings = config.load_settings()
         self.store = SessionStore()
@@ -589,84 +626,34 @@ class MainWindow(QMainWindow):
         self.tabs.tabBar().setDrawBase(False)   # Remove the default base line under tabs (white line in dark mode)
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.setCentralWidget(self.tabs)
-        self._welcome()
 
         self._build_sessions_dock()
         self._build_toolbar()
         self._build_menu()
         self.reload_sessions()
+        self.tunnels = TunnelManager(self.store, self)
+        self.snippets = library.SnippetStore()
+        # Home tab (Termius-style menu: Hosts, Keychain, Port Forwarding, …) — always the first tab
+        self.home = HomeTab(self)
+        self.tabs.insertTab(0, self.home, icons.line("home"), tr("Home"))
+        self.tabs.tabBar().setTabButton(0, self.tabs.tabBar().ButtonPosition.RightSide, None)
+        self.tabs.setCurrentIndex(0)
+        self.last_session_tab: SessionTab | None = None
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+        # Session list on the left: shown with terminal tabs (Home has its own menu)
+        self._apply_sessions_panel()
+        # Optional master password: ask to unlock whenever a saved secret is needed, lock when idle
+        vaultui.install_unlock_hook(self.store, self)
+        self._last_input = time.monotonic()
+        self._started = False
+        self.vault_timer = QTimer(self)
+        self.vault_timer.setInterval(15000)
+        self.vault_timer.timeout.connect(self._auto_lock)
+        self.vault_timer.start()
         QApplication.instance().installEventFilter(self)   # Detect keyboard/mouse activity (idle auto-disconnect)
         QTimer.singleShot(3000, cleanup_temp)   # Clean up old temp copies (slightly delayed to keep startup light)
 
     # ------------------------------------------------------------ UI setup
-    def _welcome(self):
-        from PySide6.QtWidgets import QGridLayout, QLabel
-        w = QWidget()
-        w.setObjectName("Welcome")
-        outer = QVBoxLayout(w)
-        outer.addStretch(2)
-        col = QVBoxLayout()
-        col.setSpacing(6)
-        logo = QLabel()
-        ico = paths.ASSETS / "app.png"
-        if ico.exists():
-            logo.setPixmap(icons.app_pixmap(str(ico), 88))
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title = QLabel("JeopsokHeyou")
-        title.setObjectName("Title")
-        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        sub = QLabel(tr("Pick a session, or enter user@host:port in the box above"))
-        sub.setObjectName("Muted")
-        sub.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        col.addWidget(logo)
-        col.addWidget(title)
-        col.addWidget(sub)
-        col.addSpacing(18)
-        self.recent_label = QLabel(tr("Recent sessions"))
-        self.recent_label.setObjectName("Section")
-        col.addWidget(self.recent_label, 0, Qt.AlignmentFlag.AlignHCenter)
-        self.recent_grid = QGridLayout()
-        self.recent_grid.setSpacing(10)
-        col.addLayout(self.recent_grid)
-        col.addSpacing(18)
-        hint = QLabel(tr("Ctrl+Shift+D split left/right · Ctrl+Shift+E split top/bottom · Ctrl+Shift+T duplicate tab · "
-                         "Ctrl+Shift+W close pane\n"
-                         "Drag = copy · Right-click = paste · Ctrl+Wheel = font size"))
-        hint.setObjectName("Muted")
-        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        col.addWidget(hint)
-        row = QHBoxLayout()
-        row.addStretch(1)
-        row.addLayout(col)
-        row.addStretch(1)
-        outer.addLayout(row)
-        outer.addStretch(3)
-        self.welcome = w
-        self.tabs.addTab(w, tr("Start"))
-        self.tabs.tabBar().setTabButton(0, self.tabs.tabBar().ButtonPosition.RightSide, None)
-
-    def _refresh_recent(self):
-        if self.welcome is None or not hasattr(self, "recent_grid"):
-            return
-        from PySide6.QtWidgets import QPushButton as _Btn
-        while self.recent_grid.count():
-            it = self.recent_grid.takeAt(0)
-            if it.widget():
-                it.widget().deleteLater()
-        order = [sid for sid in self.settings.get("recent", []) if self.store.get(sid)]
-        order += [s.id for s in self.store.sessions if s.id not in order]
-        for i, sid in enumerate(order[:6]):
-            s = self.store.get(sid)
-            b = _Btn(f"{s.title()}\n{s.user}@{s.host}" + (f"  ·  {s.group}" if s.group else ""))
-            b.setObjectName("Card")
-            b.setIcon(icons.line("server", theme.current().accent))
-            b.setIconSize(QSize(22, 22))
-            b.setMinimumWidth(230)
-            b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _=False, s=s: self.open_session(s))
-            self.recent_grid.addWidget(b, i // 2, i % 2)
-        self.recent_label.setVisible(bool(order))
-
     def _build_sessions_dock(self):
         dock = QDockWidget(tr("Sessions"), self)
         dock.setObjectName("sessions")
@@ -704,12 +691,36 @@ class MainWindow(QMainWindow):
         btns = QHBoxLayout()
         btns.addWidget(add, 1)
         btns.addWidget(add_group)
-        lay.addWidget(self.filter)
+        top = QHBoxLayout()
+        top.setSpacing(4)
+        top.addWidget(self.filter, 1)
+        self.sessions_collapse_btn = QToolButton()
+        icons.bind(self.sessions_collapse_btn, "sidebar")
+        self.sessions_collapse_btn.setToolTip(tr("Hide session list (Ctrl+Shift+S)"))
+        self.sessions_collapse_btn.clicked.connect(self.toggle_sessions_panel)
+        top.addWidget(self.sessions_collapse_btn)
+        lay.addLayout(top)
         lay.addWidget(self.session_tree, 1)
         lay.addLayout(btns)
         w.setMinimumWidth(200)
-        dock.setWidget(w)
-        dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetClosable | QDockWidget.DockWidgetFeature.DockWidgetMovable)
+        # Collapsed: a slim strip with a button to bring the list back
+        strip = QWidget()
+        strip.setObjectName("Sidebar")
+        sl = QVBoxLayout(strip)
+        sl.setContentsMargins(4, 10, 4, 8)
+        self.sessions_expand_btn = QToolButton()
+        icons.bind(self.sessions_expand_btn, "sidebar")
+        self.sessions_expand_btn.setToolTip(tr("Show session list (Ctrl+Shift+S)"))
+        self.sessions_expand_btn.clicked.connect(self.toggle_sessions_panel)
+        sl.addWidget(self.sessions_expand_btn)
+        sl.addStretch(1)
+        self.sessions_full, self.sessions_strip = w, strip
+        from PySide6.QtWidgets import QStackedWidget
+        self.sessions_stack = QStackedWidget()
+        self.sessions_stack.addWidget(w)
+        self.sessions_stack.addWidget(strip)
+        dock.setWidget(self.sessions_stack)
+        dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetMovable)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, dock)
         self.resizeDocks([dock], [240], Qt.Orientation.Horizontal)
         self.sessions_dock = dock
@@ -728,7 +739,7 @@ class MainWindow(QMainWindow):
             b.clicked.connect(slot)
             tb.addWidget(b)
             return b
-        tool("sidebar", tr("Show/hide session list"), lambda: self.sessions_dock.setVisible(not self.sessions_dock.isVisible()))
+        self.home_btn = tool("home", tr("Home (Ctrl+Shift+H)"), lambda: self.show_home())
         tool("plus", tr("New session (Ctrl+Shift+N)"), self.new_session)
         tb.addSeparator()
         tool("split_h", tr("Split left/right (Ctrl+Shift+D)"), lambda: self.split(Qt.Orientation.Horizontal))
@@ -753,7 +764,9 @@ class MainWindow(QMainWindow):
         self._act(m, tr("Import PuTTY sessions"), self.import_putty)
         self._act(m, tr("Import Tabby sessions"), self.import_tabby)
         self._act(m, tr("Import MobaXterm sessions…"), self.import_mobaxterm)
+        self._act(m, tr("Import OpenSSH config / Termius…"), self.import_ssh_config)
         m.addSeparator()
+        self._act(m, tr("Lock saved passwords"), self.lock_vault, "Ctrl+Shift+L")
         self._act(m, tr("Exit"), self.close)
 
         m = mb.addMenu(tr("&Terminal"))
@@ -763,13 +776,20 @@ class MainWindow(QMainWindow):
         self._act(m, tr("Close pane (split pane → tab)"), self.close_pane_or_tab, "Ctrl+Shift+W")
         self._act(m, tr("Next tab"), lambda: self._cycle(1), "Ctrl+Tab")
         self._act(m, tr("Previous tab"), lambda: self._cycle(-1), "Ctrl+Shift+Tab")
+        self._act(m, tr("Snippets…"), self.pick_snippet, "Ctrl+Shift+P")
         m.addSeparator()
         self._act(m, tr("Copy  (Ctrl+Shift+C / drag)"), lambda: None)
         self._act(m, tr("Paste  (Ctrl+Shift+V / right-click)"), lambda: None)
 
         m = mb.addMenu(tr("&View"))
+        self._act(m, tr("Home"), lambda: self.show_home(), "Ctrl+Shift+H")
         self._act(m, tr("Show/hide SFTP explorer"), self.toggle_explorer, "Ctrl+Shift+B")
-        m.addAction(self.sessions_dock.toggleViewAction())
+        self.sessions_act = QAction(tr("Session list panel"), self)
+        self.sessions_act.setCheckable(True)
+        self.sessions_act.setChecked(bool(self.settings.get("show_sessions", True)))
+        self.sessions_act.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        self.sessions_act.triggered.connect(lambda _c=False: self.toggle_sessions_panel())
+        m.addAction(self.sessions_act)
         m.addSeparator()
         self._act(m, tr("Font…"), self.choose_font)
         self._act(m, tr("Larger text"), lambda: self.zoom_font(1), "Ctrl+Shift+=")
@@ -795,7 +815,14 @@ class MainWindow(QMainWindow):
             self._font_actions[key] = a
         m.addSeparator()
         self._act(m, tr("Settings…"), self.open_settings, "Ctrl+,")
+        self._act(m, tr("Master password…"), self.open_vault_settings)
         self._sync_appearance_menu()
+
+        m = mb.addMenu(tr("T&ools"))
+        self._act(m, tr("Port forwarding…"), self.show_tunnels, "Ctrl+Shift+F")
+        self._act(m, tr("Keychain"), lambda: self.show_home("keychain"))
+        self._act(m, tr("Known Hosts"), lambda: self.show_home("known_hosts"))
+        self._act(m, tr("History"), lambda: self.show_home("history"))
 
         m = mb.addMenu(tr("&Help"))
         self._act(m, tr("About JeopsokHeyou"), self.show_about)
@@ -863,6 +890,7 @@ class MainWindow(QMainWindow):
             T = QEvent.Type
             MainWindow._ACTIVITY_EVENTS = {T.KeyPress, T.MouseButtonPress, T.Wheel, T.InputMethod}
         if e.type() in MainWindow._ACTIVITY_EVENTS and isinstance(obj, QWidget):
+            self._last_input = time.monotonic()
             t = self.tabs.currentWidget()
             if isinstance(t, SessionTab) and (obj is t or t.isAncestorOf(obj)):
                 t.touch()
@@ -871,6 +899,30 @@ class MainWindow(QMainWindow):
     def showEvent(self, e):
         super().showEvent(e)
         theme.style_window(self, theme.current())
+        if not self._started:
+            self._started = True
+            QTimer.singleShot(0, self._startup)
+
+    def _startup(self):
+        """After the window first appears: unlock (when a master password is set), then autostart tunnels."""
+        if vault.enabled() and not vault.unlocked():
+            vaultui.ask_unlock(self.store, self)
+        self.tunnels.autostart()
+
+    def _auto_lock(self):
+        mins = int(self.settings.get("vault_lock_minutes", vaultui.DEFAULT_LOCK_MINUTES) or 0)
+        if mins and vault.unlocked() and time.monotonic() - self._last_input > mins * 60:
+            vault.lock()
+
+    def lock_vault(self):
+        if not vault.enabled():
+            QMessageBox.information(self, tr("Master password"),
+                                    tr("No master password is set. Turn it on in Settings → Master password."))
+            return
+        vault.lock()
+
+    def open_vault_settings(self):
+        vaultui.VaultDialog(self.store, self.settings, self).exec()
 
     def _act(self, menu: QMenu, text, slot, shortcut=None):
         a = QAction(text, self)
@@ -893,14 +945,24 @@ class MainWindow(QMainWindow):
         section_font.setBold(True)
         Flag = Qt.ItemFlag
         groups: dict[str, QTreeWidgetItem] = {}
+        # Subgroups ("A / B") are shown nested under their parent; missing parent levels are filled in
+        paths = set()
         for name in self.store.groups():
-            g = QTreeWidgetItem([name])
+            parts = name.split(config.GROUP_SEP)
+            for i in range(1, len(parts) + 1):
+                paths.add(config.GROUP_SEP.join(parts[:i]))
+        for name in sorted(paths, key=lambda x: (x.count(config.GROUP_SEP), x.lower())):
+            g = QTreeWidgetItem([config.group_leaf(name)])
             g.setFont(0, section_font)
             g.setForeground(0, QColor(t.faint))
             g.setData(0, GROUP_ROLE, name)
             # Groups: sessions can be dropped in, but the group itself can't be dragged
             g.setFlags(Flag.ItemIsEnabled | Flag.ItemIsSelectable | Flag.ItemIsDropEnabled)
-            tree.addTopLevelItem(g)
+            parent = groups.get(config.group_parent(name))
+            if parent is not None:
+                parent.addChild(g)
+            else:
+                tree.addTopLevelItem(g)
             groups[name] = g
         for s in sorted(self.store.sessions, key=lambda x: x.title().lower()):
             hay = f"{s.title()} {s.host} {s.user} {s.group}".lower()
@@ -912,15 +974,24 @@ class MainWindow(QMainWindow):
             it.setData(0, Qt.ItemDataRole.UserRole, s.id)
             it.setFlags(Flag.ItemIsEnabled | Flag.ItemIsSelectable | Flag.ItemIsDragEnabled)
             if s.group in groups:
-                groups[s.group].addChild(it)
+                # A group's own sessions come right under it, before its subgroups
+                g = groups[s.group]
+                pos = sum(1 for i in range(g.childCount()) if g.child(i).data(0, GROUP_ROLE) is None)
+                g.insertChild(pos, it)
             else:
                 tree.addTopLevelItem(it)
+        def sessions_under(name: str) -> int:
+            return sum(1 for s in self.store.sessions if config.in_group(s.group, name)
+                       and (not q or q in f"{s.title()} {s.host} {s.user} {s.group}".lower()))
         for name, g in groups.items():
-            if q and g.childCount() == 0 and q not in name.lower():
+            n = sessions_under(name)
+            if q and n == 0 and q not in name.lower():
                 g.setHidden(True)  # Hide groups with no results while searching
             g.setExpanded(bool(q) or name not in self._collapsed)
-            g.setToolTip(0, tr("{name} — {count} sessions", name=name, count=g.childCount()))
-        self._refresh_recent()
+            g.setToolTip(0, tr("{name} — {count} sessions", name=name, count=n))
+        if hasattr(self, "home"):
+            self.home.hosts.refresh()
+            self.home.start.refresh()
 
     def _toggle_group(self, item, _col=0):
         if item.data(0, GROUP_ROLE) is None or not item.childCount():
@@ -931,14 +1002,20 @@ class MainWindow(QMainWindow):
 
     def _connect_first_visible(self):
         tree = self.session_tree
-        for i in range(tree.topLevelItemCount()):
-            top = tree.topLevelItem(i)
-            if top.isHidden():
-                continue
-            it = top.child(0) if top.data(0, GROUP_ROLE) is not None else top
-            if it is not None:
-                self._on_session_double(it)
-                return
+
+        def first_session(items):   # depth first, through subgroups
+            for it in items:
+                if it.isHidden():
+                    continue
+                if it.data(0, GROUP_ROLE) is None:
+                    return it
+                found = first_session([it.child(i) for i in range(it.childCount())])
+                if found is not None:
+                    return found
+            return None
+        it = first_session([tree.topLevelItem(i) for i in range(tree.topLevelItemCount())])
+        if it is not None:
+            self._on_session_double(it)
 
     def _on_session_double(self, item, _col=0):
         sid = item.data(0, Qt.ItemDataRole.UserRole)
@@ -977,17 +1054,21 @@ class MainWindow(QMainWindow):
         m.addAction(tr("Import PuTTY sessions"), self.import_putty)
         m.addAction(tr("Import Tabby sessions"), self.import_tabby)
         m.addAction(tr("Import MobaXterm sessions…"), self.import_mobaxterm)
+        m.addAction(tr("Import OpenSSH config / Termius…"), self.import_ssh_config)
         m.exec(self.session_tree.viewport().mapToGlobal(pos))
 
     def _groups(self):
         return self.store.groups()
 
     # ------------------------------------------------------------ groups
-    def add_group(self, move_ids: list[str] | None = None):
-        name, ok = QInputDialog.getText(self, tr("Add group"), tr("Group name:"))
-        name = name.strip()
+    def add_group(self, move_ids: list[str] | None = None, parent: str = ""):
+        label = tr("Name of the new group inside '{parent}':", parent=parent) if parent else tr("Group name:")
+        name, ok = QInputDialog.getText(self, tr("Add group"), label)
+        name = name.strip().replace(config.GROUP_SEP.strip(), "-") if ok else ""
         if not ok or not name:
             return
+        if parent:
+            name = parent + config.GROUP_SEP + name
         if name in self.store.groups() and not move_ids:
             QMessageBox.information(self, tr("Add group"), tr("Group '{name}' already exists.", name=name))
             return
@@ -998,9 +1079,13 @@ class MainWindow(QMainWindow):
         self.reload_sessions()
 
     def rename_group(self, old: str):
-        new, ok = QInputDialog.getText(self, tr("Rename group"), tr("New name:"), text=old)
-        new = new.strip()
-        if not ok or not new or new == old:
+        new, ok = QInputDialog.getText(self, tr("Rename group"), tr("New name:"), text=config.group_leaf(old))
+        new = new.strip().replace(config.GROUP_SEP.strip(), "-") if ok else ""
+        if not ok or not new:
+            return
+        if config.group_parent(old):
+            new = config.group_parent(old) + config.GROUP_SEP + new
+        if new == old:
             return
         if not self.store.rename_group(old, new):
             QMessageBox.information(self, tr("Rename group"), tr("Group '{name}' already exists.", name=new))
@@ -1011,7 +1096,7 @@ class MainWindow(QMainWindow):
         self.reload_sessions()
 
     def remove_group(self, name: str):
-        n = sum(1 for s in self.store.sessions if s.group == name)
+        n = sum(1 for s in self.store.sessions if config.in_group(s.group, name))
         msg = tr("Delete group '{name}'?", name=name)
         if n:
             msg += "\n\n" + tr("The {n} sessions in it won't be deleted; they will be moved out of the group.", n=n)
@@ -1026,7 +1111,7 @@ class MainWindow(QMainWindow):
             self.reload_sessions()
 
     def new_session(self, group: str = ""):
-        d = SessionDialog(None, self._groups(), self)
+        d = SessionDialog(None, self._groups(), self, sessions=self.store.sessions)
         if isinstance(group, str) and group:
             d.group.setCurrentText(group)
         if d.exec():
@@ -1035,7 +1120,7 @@ class MainWindow(QMainWindow):
             self.open_session(d.session, d.transient_password, d.transient_passphrase)
 
     def edit_session(self, s: Session):
-        d = SessionDialog(Session.from_dict(dict(s.__dict__)), self._groups(), self)
+        d = SessionDialog(Session.from_dict(dict(s.__dict__)), self._groups(), self, sessions=self.store.sessions)
         if d.exec():
             self.store.upsert(d.session)
             self.reload_sessions()
@@ -1055,8 +1140,12 @@ class MainWindow(QMainWindow):
             self.reload_sessions()
 
     def _import_sessions(self, label: str, found: list[Session], note: str):
-        existing = {(s.host, s.port, s.user) for s in self.store.sessions}
+        existing = {(s.host, s.port, s.user): s.id for s in self.store.sessions}
         new = [s for s in found if (s.host, s.port, s.user) not in existing]
+        # Jump hosts that were already present: point to the existing session instead
+        remap = {s.id: existing[(s.host, s.port, s.user)] for s in found if (s.host, s.port, s.user) in existing}
+        for s in new:
+            s.jump = remap.get(s.jump, s.jump)
         for s in new:
             self.store.sessions.append(s)
         self.store.save()
@@ -1081,9 +1170,28 @@ class MainWindow(QMainWindow):
             tr("MobaXterm sessions (MobaXterm.ini *.mxtsessions)") + ";;" + tr("All files (*)"))
         if not path:
             return
-        self._import_sessions("MobaXterm", config.import_mobaxterm_sessions(Path(path)),
-                              tr("Passwords are kept in MobaXterm's own store and are not imported; "
-                                 "enter them when you first connect."))
+        note = tr("Passwords are kept in MobaXterm's own store and are not imported; enter them when you first connect.")
+        # The same file also holds the MobaSSHTunnel list
+        added, dup, _new = import_mobaxterm_tunnels(Path(path), self.store, self.tunnels.tunnels)
+        if added or dup:
+            self.tunnels.changed.emit()
+            note += "\n\n" + tr("Port forwarding: imported {n} MobaSSHTunnel tunnels (Tools → Port forwarding).", n=added) \
+                + (" " + tr("({dup} already present were skipped)", dup=dup) if dup else "") \
+                + "\n" + tr("Autostart and auto-reconnect are not stored in MobaXterm.ini — set them in each tunnel.") \
+                + "\n" + tr("Tunnels that listened on all network interfaces now listen on this PC only (127.0.0.1).")
+        self._import_sessions("MobaXterm", config.import_mobaxterm_sessions(Path(path)), note)
+
+    def import_ssh_config(self):
+        from PySide6.QtWidgets import QFileDialog
+        default = sshconfig.default_file()
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("Select an OpenSSH config file"), str(default if default.exists() else default.parent),
+            tr("OpenSSH config (config *.conf *.config)") + ";;" + tr("All files (*)"))
+        if not path:
+            return
+        self._import_sessions("SSH config", sshconfig.import_ssh_config(Path(path)),
+                              tr("Passwords are not part of an SSH config file; enter them when you first connect.\n"
+                                 "From Termius, export your hosts first with: {cmd}", cmd="termius export-ssh-config"))
 
     def import_tabby(self):
         if not config.TABBY_CONFIG.exists():
@@ -1117,11 +1225,6 @@ class MainWindow(QMainWindow):
         tab.title_changed.connect(self._on_tab_title)
         idx = self.tabs.addTab(tab, s.title())
         self.tabs.setCurrentIndex(idx)
-        if self.welcome is not None:
-            wi = self.tabs.indexOf(self.welcome)
-            if wi >= 0:
-                self.tabs.removeTab(wi)
-            self.welcome = None
         tab.explorer.setVisible(self.settings.get("show_explorer", True))
         tab.connect()
 
@@ -1206,7 +1309,74 @@ class MainWindow(QMainWindow):
             self.term_font = pick_font(font.family(), font.pointSize())
             self._apply_font()
 
+    def show_tunnels(self):
+        self.show_home("forwarding")
+
+    def show_home(self, page: str = "start"):
+        self.tabs.setCurrentWidget(self.home)
+        if page:
+            self.home.show_page(page)
+
+    def _on_tab_changed(self, idx: int):
+        w = self.tabs.widget(idx)
+        if isinstance(w, SessionTab):
+            self.last_session_tab = w
+        elif w is self.home:
+            self.home.refresh_current()
+        self._apply_sessions_panel()
+
+    def _apply_sessions_panel(self):
+        """Session list next to terminal tabs (full, or collapsed to a slim strip); none on Home."""
+        on_terminal = isinstance(self.tabs.currentWidget(), SessionTab)
+        expanded = bool(self.settings.get("show_sessions", True))
+        dock = self.sessions_dock
+        dock.setVisible(on_terminal)
+        if expanded:
+            self.sessions_stack.setCurrentWidget(self.sessions_full)
+            self.sessions_stack.setMaximumWidth(16777215)
+            self.sessions_stack.setMinimumWidth(200)
+            if on_terminal and dock.width() < 200:
+                self.resizeDocks([dock], [240], Qt.Orientation.Horizontal)
+        else:
+            self.sessions_stack.setCurrentWidget(self.sessions_strip)
+            self.sessions_stack.setMinimumWidth(0)
+            self.sessions_stack.setMaximumWidth(36)
+            if on_terminal:
+                self.resizeDocks([dock], [36], Qt.Orientation.Horizontal)
+        if hasattr(self, "sessions_act"):
+            self.sessions_act.setChecked(expanded)
+
+    def toggle_sessions_panel(self):
+        self.settings["show_sessions"] = not bool(self.settings.get("show_sessions", True))
+        self._apply_sessions_panel()
+
+    def _snippet_target(self) -> "SessionTab | None":
+        t = self.current_tab()
+        if t is None and self.last_session_tab is not None and self.tabs.indexOf(self.last_session_tab) >= 0:
+            t = self.last_session_tab
+        return t
+
+    def send_snippet(self, snip):
+        tab = self._snippet_target()
+        pane = (tab.active or tab.panes[0]) if tab and tab.panes else None
+        if pane is None or pane.disconnected:
+            QMessageBox.information(self, tr("Snippets"), tr("Open a connected terminal first."))
+            return
+        self.tabs.setCurrentWidget(tab)
+        pane.send_text(snip.text_to_send())
+        pane.setFocus()
+
+    def pick_snippet(self):
+        if not self.snippets.snippets:
+            QMessageBox.information(self, tr("Snippets"), tr("No snippets yet. Add one on Home → Snippets."))
+            self.show_home("snippets")
+            return
+        d = SnippetPicker(self.snippets, self)
+        if d.exec() and d.chosen:
+            self.send_snippet(d.chosen)
+
     def closeEvent(self, e):
+        self.tunnels.stop_all()
         config.save_settings(self.settings)
         for i in range(self.tabs.count()):
             w = self.tabs.widget(i)

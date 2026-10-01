@@ -12,6 +12,17 @@ from jeopsokheyou import config, i18n, paths
 from jeopsokheyou.mainwindow import MainWindow, apply_dark_theme
 
 
+RUN_MUTEX = "JeopsokHeyou.Running"   # checked by the installer (packaging/installer.nsi)
+_run_mutex = None
+
+
+def mark_running() -> None:
+    """Windows: hold a named mutex while the app runs so the installer can ask to close it first."""
+    global _run_mutex
+    if sys.platform == "win32" and _run_mutex is None:
+        _run_mutex = ctypes.windll.kernel32.CreateMutexW(None, False, RUN_MUTEX)
+
+
 def app_icon() -> QIcon | None:
     for name in ("app.ico", "app.png"):
         p = paths.ASSETS / name
@@ -34,6 +45,7 @@ def main() -> int:
     if sys.platform == "win32":
         # Use a separate app ID so the taskbar shows the app icon instead of the python icon
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("JeopsokHeyou.App")
+        mark_running()
     app = QApplication([sys.argv[0], *rest])
     app.setApplicationName("JeopsokHeyou")
     # Pick the UI language before any window is created

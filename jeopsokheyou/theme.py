@@ -238,8 +238,10 @@ QHeaderView::section:last {{ border-right: none; }}
 #Sidebar, #Sidebar QTreeView {{ background: {t.sidebar}; }}
 #Sidebar QTreeView {{ show-decoration-selected: 0; padding: 2px 6px; }}
 #Sidebar QTreeView::item {{ min-height: 26px; border-radius: 6px; padding-left: 4px; }}
-#Sidebar QTreeView::item:selected {{ background: {t.accent}; color: {t.accent_text}; }}
-#Sidebar QTreeView::item:selected:!active {{ background: {t.sel_inactive}; color: {t.text}; }}
+#Sidebar QTreeView::item:selected {{ background: {t.accent}; color: {t.accent_text}; margin-top: 1px; }}
+#Sidebar QTreeView::item:selected:!active {{ background: {t.sel_inactive}; color: {t.text}; margin-top: 1px; }}
+/* margin-top: at 125-175% display scaling the rounded selection's top edge otherwise bleeds one pixel into the
+   arrow area as a thin line */
 /* indent (arrow) area: if transparent, selection/hover color shows through as a sliver on the left -> paint with sidebar color */
 #Sidebar QTreeView::branch, #Sidebar QTreeView::branch:selected, #Sidebar QTreeView::branch:hover,
 #Sidebar QTreeView::branch:selected:!active {{ background: {t.sidebar}; }}
@@ -259,6 +261,38 @@ QLabel#Muted {{ color: {t.muted}; }}
 #IdleBanner QLabel {{ color: {"#F5D78E" if t.dark else "#6B4E00"}; }}
 QLabel#Title {{ font-size: 22px; font-weight: 600; }}
 QLabel#Section {{ color: {t.faint}; font-size: 11px; font-weight: 600; }}
+
+/* home tab (Termius-style menu + pages) */
+#NavBar {{ background: {t.sidebar}; border-right: 1px solid {t.sep}; }}
+QListWidget#Nav {{ background: transparent; border: none; }}
+QListWidget#Nav::item {{ padding: 8px 10px; margin: 1px 0; border-radius: 8px; color: {t.text}; }}
+QListWidget#Nav::item:hover {{ background: {t.hover}; }}
+QListWidget#Nav::item:selected {{ background: {t.accent}; color: {t.accent_text}; }}
+QPushButton#NavButton {{ text-align: left; background: transparent; border: none; padding: 8px 10px; border-radius: 8px; }}
+QPushButton#NavButton:hover {{ background: {t.hover}; }}
+#Page, #Page > QWidget, QStackedWidget#Page {{ background: {t.window}; }}
+QScrollArea {{ background: transparent; }}
+QScrollArea > QWidget > QWidget#Page {{ background: {t.window}; }}
+QLabel#PageTitle {{ font-size: 18px; font-weight: 700; }}
+QPushButton#TreeHead {{ text-align: left; background: transparent; border: none; border-radius: 6px;
+    padding: 4px 8px; }}
+QPushButton#TreeHead:hover {{ background: {t.hover}; }}
+QPushButton#TreeHead:checked {{ background: {t.accent}; color: {t.accent_text}; }}
+#Sidebar QTreeView#HostTree {{ show-decoration-selected: 0; }}
+QPushButton#Crumb {{ background: transparent; border: none; color: {t.muted}; font-size: 15px; padding: 2px 6px; }}
+QPushButton#Crumb:hover {{ color: {t.accent}; background: {t.hover}; }}
+QFrame#Card {{ background: {t.content}; border: 1px solid {t.sep}; border-radius: 12px; }}
+QFrame#Card:hover {{ border-color: {t.accent}; }}
+QFrame#Card[selected="true"] {{ border: 2px solid {t.accent}; }}
+QLabel#CardTitle {{ font-weight: 600; }}
+QPushButton#Primary {{ background: {t.accent}; color: {t.accent_text}; border-color: {t.accent}; font-weight: 600; }}
+QPushButton#Primary:hover {{ background: {t.accent}; border-color: {t.text}; }}
+QToolButton#Button {{ background: {t.button}; border: 1px solid {t.button_border}; border-radius: 7px; padding: 5px 12px; }}
+QToolButton#Button:hover {{ border-color: {t.accent}; }}
+QToolButton#Button::menu-indicator {{ image: none; width: 0; }}
+QLineEdit#Search {{ padding: 6px 10px; border-radius: 9px; }}
+QFrame#EditPanel {{ background: {t.toolbar}; border-left: 1px solid {t.sep}; }}
+QFrame#EditPanel QDialog {{ background: transparent; }}
 
 /* scrollbars: thin and rounded */
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}

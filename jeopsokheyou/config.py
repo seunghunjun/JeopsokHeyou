@@ -3,7 +3,8 @@
 """App settings / session store.
 
 - Session list: %APPDATA%/JeopsokHeyou/sessions.json
-- Passwords/passphrases: stored encrypted with Windows DPAPI (current user account only)
+- Passwords/passphrases: stored encrypted with Windows DPAPI (current user account only) or the macOS
+  Keychain — or, when the optional master password is on, with the local vault (vault.py)
 - known_hosts: %APPDATA%/JeopsokHeyou/known_hosts
 """
 from __future__ import annotations
@@ -19,7 +20,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from . import paths
+from . import paths, vault
 
 
 def app_dir() -> Path:
@@ -116,7 +117,16 @@ def _keychain_delete(account: str) -> None:
 
 def store_secret(key: str, value: str) -> str:
     """Store a secret and return the token to keep in sessions.json ("" = not stored).
-    Windows: the DPAPI-encrypted value itself. macOS: a marker; the value goes to the Keychain."""
+    With the master password on: a vault token. Otherwise Windows: the DPAPI-encrypted value itself;
+    macOS: a marker, the value goes to the Keychain."""
+    if vault.enabled():
+        if paths.IS_MAC:
+            _keychain_delete(key)       # never leave an old copy behind in the Keychain
+        return vault.encrypt(key, value)
+    return _os_store_secret(key, value)
+
+
+def _os_store_secret(key: str, value: str) -> str:
     if paths.IS_MAC:
         if not value:
             _keychain_delete(key)
@@ -128,6 +138,8 @@ def store_secret(key: str, value: str) -> str:
 def load_secret(key: str, token: str) -> str:
     if not token:
         return ""
+    if token.startswith(vault.TOKEN_PREFIX):
+        return vault.decrypt(key, token)
     if token == KEYCHAIN_TOKEN:
         return _keychain_get(key) if paths.IS_MAC else ""
     return unprotect(token)
@@ -154,6 +166,8 @@ class Session:
     follow_cwd: bool = True
     encoding: str = "utf-8"
     idle_minutes: int = -1   # auto disconnect: -1 use global setting, 0 disabled, N minutes
+    jump: str = ""            # id of the session to connect through (ProxyJump)
+    forwards: list = field(default_factory=list)   # port forwards opened with the session (forwarding.Forward dicts)
     id: str = field(default_factory=lambda: uuid.uuid4().hex)
 
     @property
@@ -183,6 +197,10 @@ class Session:
     @classmethod
     def from_dict(cls, d: dict) -> "Session":
         known = {k: v for k, v in d.items() if k in cls.__dataclass_fields__}
+        if isinstance(known.get("forwards"), list):
+            known["forwards"] = [dict(f) for f in known["forwards"] if isinstance(f, dict)]   # never share with the source
+        else:
+            known.pop("forwards", None)
         return cls(**known)
 
     @classmethod
@@ -201,6 +219,22 @@ class Session:
                 port = int(p)
             text = host
         return cls(name="", host=text, port=port, user=user)
+
+
+GROUP_SEP = " / "   # subgroups are stored as paths, e.g. "Production / DB" (also how MobaXterm folders import)
+
+
+def group_parent(name: str) -> str:
+    return name.rsplit(GROUP_SEP, 1)[0] if GROUP_SEP in name else ""
+
+
+def group_leaf(name: str) -> str:
+    return name.rsplit(GROUP_SEP, 1)[-1]
+
+
+def in_group(group: str, ancestor: str) -> bool:
+    """True when ``group`` is ``ancestor`` or one of its subgroups."""
+    return group == ancestor or group.startswith(ancestor + GROUP_SEP)
 
 
 class SessionStore:
@@ -250,22 +284,25 @@ class SessionStore:
         new = new.strip()
         if not new or new == old or new in self.groups():
             return False
-        self._groups = [new if g == old else g for g in self._groups]
+        def renamed(g: str) -> str:   # the group itself and its subgroups
+            return new + g[len(old):] if in_group(g, old) else g
+        self._groups = list(dict.fromkeys(renamed(g) for g in self._groups))
         if new not in self._groups:
             self._groups.append(new)
         for s in self.sessions:
-            if s.group == old:
-                s.group = new
+            s.group = renamed(s.group)
         self.save()
         return True
 
     def remove_group(self, name: str) -> int:
-        """Delete a group. Its sessions are not deleted but moved out to the top level. Returns the number moved."""
-        self._groups = [g for g in self._groups if g != name]
+        """Delete a group and its subgroups. Their sessions are not deleted but moved up to the parent group
+        (the top level for a top-level group). Returns the number moved."""
+        parent = group_parent(name)
+        self._groups = [g for g in self._groups if not in_group(g, name)]
         moved = 0
         for s in self.sessions:
-            if s.group == name:
-                s.group = ""
+            if in_group(s.group, name):
+                s.group = parent
                 moved += 1
         self.save()
         return moved
@@ -298,10 +335,68 @@ class SessionStore:
             if s.id == sid:
                 s.forget_secrets()
         self.sessions = [s for s in self.sessions if s.id != sid]
+        for s in self.sessions:
+            if s.jump == sid:
+                s.jump = ""
         self.save()
 
     def get(self, sid: str) -> Session | None:
         return next((s for s in self.sessions if s.id == sid), None)
+
+    # --- master password (vault.py): move secrets between the OS store and the vault
+    SECRET_FIELDS = ("password", "passphrase")
+
+    def move_secrets_to_vault(self) -> int:
+        """After turning the vault on: re-encrypt every saved secret with it. Returns the number moved."""
+        n = 0
+        for s in self.sessions:
+            for f in self.SECRET_FIELDS:
+                token, key = getattr(s, f + "_enc"), f"{s.id}.{f}"
+                if token and not token.startswith(vault.TOKEN_PREFIX):
+                    plain = load_secret(key, token)
+                    delete_secret(key, token)
+                    setattr(s, f + "_enc", vault.encrypt(key, plain) if plain else "")
+                    n += 1
+        self.save()
+        return n
+
+    def move_secrets_out_of_vault(self) -> int:
+        """Before turning the vault off (unlocked): store every secret with the OS again."""
+        n = 0
+        for s in self.sessions:
+            for f in self.SECRET_FIELDS:
+                token, key = getattr(s, f + "_enc"), f"{s.id}.{f}"
+                if token.startswith(vault.TOKEN_PREFIX):
+                    plain = vault.decrypt(key, token)
+                    setattr(s, f + "_enc", _os_store_secret(key, plain) if plain else "")
+                    n += 1
+        self.save()
+        return n
+
+    def drop_vault_secrets(self) -> int:
+        """Vault reset (password and recovery key lost): forget the secrets it held; sessions stay."""
+        n = 0
+        for s in self.sessions:
+            for f in self.SECRET_FIELDS:
+                if getattr(s, f + "_enc").startswith(vault.TOKEN_PREFIX):
+                    setattr(s, f + "_enc", "")
+                    n += 1
+        self.save()
+        return n
+
+    def jump_chain(self, s: Session) -> list[Session]:
+        """Jump hosts to go through for a session, outermost first. Stops at loops and missing sessions."""
+        chain: list[Session] = []
+        seen = {s.id}
+        cur = s
+        while cur.jump:
+            j = self.get(cur.jump)
+            if j is None or j.id in seen:
+                break
+            seen.add(j.id)
+            chain.insert(0, j)
+            cur = j
+        return chain
 
 
 def _putty_session(name: str, values: dict) -> Session | None:
