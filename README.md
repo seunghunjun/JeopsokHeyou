@@ -244,9 +244,12 @@ push; pushing a `v*` tag builds all installers and drafts a GitHub Release.
 
 ## ✍️ Code signing policy
 
-Windows releases are being prepared for signing through the
-[SignPath Foundation](https://signpath.org) free code signing program for open source projects
-(application pending — current releases are **not** signed yet).
+Current releases are **not code-signed**. The project applied to the
+[SignPath Foundation](https://signpath.org) free code signing program for open source projects; the
+application was not approved yet because the program requires more public adoption, and we plan to
+reapply once the project is better known. Until then, verify downloads with `SHA256SUMS.txt`.
+
+Once releases are signed:
 
 - Only JeopsokHeyou's own binaries are signed (`JeopsokHeyou.exe`, the installer and the uninstaller);
   third-party libraries are shipped unmodified from their upstream projects.

@@ -238,8 +238,9 @@ python -m venv .venv
 
 ## ✍️ コード署名ポリシー
 
-Windows 版のリリースは、オープンソースプロジェクト向けの無料コード署名プログラムである
-[SignPath Foundation](https://signpath.org) による署名を準備中です(申請中 — 現在のリリースは **署名されていません**)。
+現在のリリースは **コード署名されていません**。オープンソースプロジェクト向けの無料コード署名プログラムである
+[SignPath Foundation](https://signpath.org) に申請しましたが、プログラムが求める公開での認知度がまだ足りず、承認されていません。
+プロジェクトがより知られるようになったら再申請する予定です。それまでは `SHA256SUMS.txt` でダウンロードしたファイルを確認してください。
 詳しいポリシーとチームの役割は [英語 README の Code signing policy](README.md#code-signing-policy) をご覧ください。
 
 ### プライバシーポリシー

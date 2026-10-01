@@ -237,8 +237,9 @@ python -m venv .venv
 
 ## ✍️ 코드 서명 정책
 
-Windows 릴리스는 오픈소스 프로젝트용 무료 코드 서명 프로그램인
-[SignPath Foundation](https://signpath.org)을 통한 서명을 준비 중입니다(신청 중 — 현재 릴리스는 **서명되지 않았습니다**).
+현재 릴리스는 **코드 서명되지 않았습니다**. 오픈소스 프로젝트용 무료 코드 서명 프로그램인
+[SignPath Foundation](https://signpath.org)에 신청했지만, 프로그램이 요구하는 공개적인 인지도가 아직 부족해 승인되지 않았습니다.
+프로젝트가 더 알려지면 다시 신청할 예정입니다. 그때까지는 `SHA256SUMS.txt`로 내려받은 파일을 확인해 주세요.
 자세한 정책과 팀 역할은 [영어 README의 Code signing policy](README.md#code-signing-policy)를 참고하세요.
 
 ### 개인정보 처리방침
