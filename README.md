@@ -5,7 +5,7 @@
 
   <p><strong>A tabbed SSH terminal and SFTP explorer for Windows and macOS — the file browser follows your shell, and your shell follows the file browser.</strong></p>
 
-  <p><b>English</b> · <a href="README.ko.md">한국어</a> · <a href="README.ja.md">日本語</a></p>
+  <p><a href="README.md"><img src="https://img.shields.io/badge/English-0969da?style=for-the-badge" alt="English" height="30" /></a>&nbsp;<a href="README.ko.md"><img src="https://img.shields.io/badge/%ED%95%9C%EA%B5%AD%EC%96%B4-6e7781?style=for-the-badge" alt="한국어" height="30" /></a>&nbsp;<a href="README.ja.md"><img src="https://img.shields.io/badge/%E6%97%A5%E6%9C%AC%E8%AA%9E-6e7781?style=for-the-badge" alt="日本語" height="30" /></a></p>
 
   <p>
     <a href="https://github.com/seunghunjun/JeopsokHeyou/releases/latest"><img src="https://img.shields.io/github/v/release/seunghunjun/JeopsokHeyou?label=release&color=3b82f6" alt="Latest release" /></a>

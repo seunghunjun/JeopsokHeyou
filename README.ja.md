@@ -5,7 +5,7 @@
 
   <p><strong>Windows・macOS 向けのタブ型 SSH ターミナル + SFTP エクスプローラー — エクスプローラーはシェルに、シェルはエクスプローラーについていきます。</strong></p>
 
-  <p><a href="README.md">English</a> · <a href="README.ko.md">한국어</a> · <b>日本語</b></p>
+  <p><a href="README.md"><img src="https://img.shields.io/badge/English-6e7781?style=for-the-badge" alt="English" height="30" /></a>&nbsp;<a href="README.ko.md"><img src="https://img.shields.io/badge/%ED%95%9C%EA%B5%AD%EC%96%B4-6e7781?style=for-the-badge" alt="한국어" height="30" /></a>&nbsp;<a href="README.ja.md"><img src="https://img.shields.io/badge/%E6%97%A5%E6%9C%AC%E8%AA%9E-0969da?style=for-the-badge" alt="日本語" height="30" /></a></p>
 
   <p>
     <a href="https://github.com/seunghunjun/JeopsokHeyou/releases/latest"><img src="https://img.shields.io/github/v/release/seunghunjun/JeopsokHeyou?label=release&color=3b82f6" alt="最新リリース" /></a>
