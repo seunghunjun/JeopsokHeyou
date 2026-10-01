@@ -5,6 +5,8 @@
 
   <p><strong>A tabbed SSH terminal and SFTP explorer for Windows and macOS — the file browser follows your shell, and your shell follows the file browser.</strong></p>
 
+  <p><b>English</b> · <a href="README.ko.md">한국어</a> · <a href="README.ja.md">日本語</a></p>
+
   <p>
     <a href="https://github.com/seunghunjun/JeopsokHeyou/releases/latest"><img src="https://img.shields.io/github/v/release/seunghunjun/JeopsokHeyou?label=release&color=3b82f6" alt="Latest release" /></a>
     <a href="https://github.com/seunghunjun/JeopsokHeyou/actions/workflows/ci.yml"><img src="https://github.com/seunghunjun/JeopsokHeyou/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
@@ -23,22 +25,29 @@
 <br/>
 
 JeopsokHeyou (pronounced *jup-sok-hae-yu*, a playful Korean way of saying "let's connect") is a
-lightweight SSH/SFTP client built for people who live in PuTTY or Tabby but keep switching to a
-separate program to move files. No account, no telemetry, no cloud.
+lightweight SSH/SFTP client built for people who live in PuTTY, Tabby, MobaXterm or Termius but keep
+switching to a separate program to move files. No account, no telemetry, no cloud.
 
 ## ✨ Features
 
 No account required. Free and open source (GPL-3.0).
 
-- **🗂️ Terminal + SFTP side by side** — every tab shows a remote file explorer next to the shell.
+- **🏠 Home screen** — the start page with your recent sessions, plus a menu for Hosts, Keychain, Port Forwarding, Snippets, Known Hosts and History.
+- **🗃️ Hosts screen** — groups and hosts as a tree and as cards, a clickable path (*All hosts › Production › DB*), search, right-click menus everywhere and a side panel for editing. Type `user@host` in the search box to connect right away.
+- **📁 Groups and subgroups** — nest groups as deep as you like; drag sessions between groups; a collapsible session list sits next to every terminal tab.
+- **🗂️ Terminal + SFTP side by side** — every connection tab shows a remote file explorer next to the shell.
 - **🔗 Two-way folder sync** — `cd` in the terminal and the explorer follows; open a folder in the explorer and the terminal quietly `cd`s there (bash/zsh). It never types into a running program or over a half-written command.
-- **🖱️ Drag & drop both ways** — drop files from Explorer or Finder to upload; drag remote files onto a folder window or the desktop to download there. Background transfers with progress and cancel.
+- **🖱️ Drag & drop both ways** — drop files from Explorer or Finder to upload; drag remote files onto a folder window or the desktop to download there. Asks before overwriting a file that already exists (overwrite / skip / cancel). Background transfers with progress and cancel; resizable columns that remember their widths.
 - **✏️ Edit remote files locally** — double-click to open in your usual app; save and JeopsokHeyou offers to upload the change (only when the content really changed). "Open with…" is built in.
 - **🪟 Tabs & split panes** — split left/right or top/bottom on the same connection, close any pane with one click.
-- **📁 Sessions & groups** — search, drag sessions between groups, collapse groups, recent-session cards on the start page.
-- **📥 One-click import** — bring your sessions over from **PuTTY**, **Tabby** and **MobaXterm** (folders and groups included).
+- **🔀 Port forwarding** — local (`-L`), remote (`-R`) and dynamic SOCKS4/5 (`-D`) forwards, opened with a session or kept running on their own as tunnels with autostart, automatic reconnect and live connection counts.
+- **🪜 Jump hosts** — connect through one or more bastion servers (ProxyJump), for terminals and tunnels alike.
+- **🔐 Optional master password** — off by default; when on, saved passwords and key passphrases are encrypted with it (AES-256-GCM + scrypt), with a one-time recovery key and auto-lock when idle.
+- **🔑 Keychain** — see your SSH keys and saved passwords in one place, generate an ed25519 key and copy its public key.
+- **⌨️ Snippets** — save frequently used commands and paste or run them in the terminal (Ctrl+Shift+P).
+- **📥 One-click import** — sessions from **PuTTY**, **Tabby**, **MobaXterm** (including MobaSSHTunnel tunnels) and **OpenSSH config** files — which is also how to bring hosts over from **Termius**.
 - **⏱️ Idle auto-disconnect** — per session or global, with a one-minute warning; never disconnects during a transfer.
-- **🛡️ Safe by default** — host-key verification (trust on first use, block on mismatch), passwords not saved unless you ask (and then kept in Windows DPAPI or the macOS Keychain), private keys referenced by path only.
+- **🛡️ Safe by default** — host-key verification (trust on first use, block on mismatch) with a Known Hosts screen, passwords not saved unless you ask, private keys referenced by path only.
 - **🎨 Finder-style UI** — light and dark themes, crisp vector icons, Korean handwriting font (Gaegu) as an option.
 - **🌐 English, Korean and Japanese** — follows the system language; switch anytime in Settings.
 - **🍎 Native on both platforms** — ⌘ shortcuts, Keychain and Finder on macOS; Explorer, DPAPI and a per-user installer on Windows.
@@ -47,16 +56,16 @@ No account required. Free and open source (GPL-3.0).
 
 <table>
   <tr>
+    <td width="50%"><img src=".github/media/home.png" alt="Home screen with host cards and groups" /><br/><sub><b>Home</b> — hosts, groups and every tool in one menu</sub></td>
     <td width="50%"><img src=".github/media/main-light.png" alt="Terminal and SFTP explorer side by side" /><br/><sub><b>Terminal + explorer</b> — one tab, one connection, both views</sub></td>
+  </tr>
+  <tr>
     <td width="50%"><img src=".github/media/sync.png" alt="The explorer follows a cd in the terminal" /><br/><sub><b>Folder sync</b> — <code>cd logs</code> in the shell, the explorer is already there</sub></td>
+    <td width="50%"><img src=".github/media/port-forwarding.png" alt="Port forwarding tunnels" /><br/><sub><b>Port forwarding</b> — local, remote and SOCKS tunnels</sub></td>
   </tr>
   <tr>
     <td width="50%"><img src=".github/media/split-panes.png" alt="Three terminal panes on one connection" /><br/><sub><b>Split panes</b> — nested left/right and top/bottom splits</sub></td>
-    <td width="50%"><img src=".github/media/main-dark.png" alt="Dark theme" /><br/><sub><b>Dark mode</b> — follows Windows or pick it yourself</sub></td>
-  </tr>
-  <tr>
-    <td width="50%"><img src=".github/media/welcome.png" alt="Start page with recent sessions" /><br/><sub><b>Start page</b> — recent sessions one click away</sub></td>
-    <td width="50%" align="center"><img src=".github/media/sidebar-dark.png" alt="Session sidebar with groups" height="330" /><br/><sub><b>Session groups</b> — drag sessions in and out of groups</sub></td>
+    <td width="50%"><img src=".github/media/home-dark.png" alt="Dark theme" /><br/><sub><b>Dark mode</b> — follows the system or pick it yourself</sub></td>
   </tr>
 </table>
 
@@ -70,6 +79,8 @@ file so you can verify what you downloaded.
 - **Installer:** `JeopsokHeyou-<version>-setup.exe` — choose English, Korean or Japanese; installs per user
   (no administrator rights) to `%LOCALAPPDATA%\Programs\JeopsokHeyou`.
 - **Portable:** `JeopsokHeyou-<version>-win-x64.zip` — unzip and run `JeopsokHeyou.exe`.
+- **Updating:** run the new installer over the old version. Your sessions, saved passwords and settings are kept.
+  If JeopsokHeyou is still running, the installer asks you to close it first.
 
 > **SmartScreen:** the builds are not code-signed yet, so Windows may show "Windows protected your PC".
 > Choose *More info → Run anyway* only if you downloaded the file from this repository's Releases page.
@@ -78,7 +89,7 @@ file so you can verify what you downloaded.
 ### macOS 13 Ventura or later
 
 - `JeopsokHeyou-<version>-macos-arm64.dmg` for Apple silicon, `…-macos-x86_64.dmg` for Intel Macs.
-- Open the DMG and drag **JeopsokHeyou** to **Applications**.
+- Open the DMG and drag **JeopsokHeyou** to **Applications** (choose **Replace** when updating).
 
 > **Gatekeeper:** the builds are not notarized by Apple yet. On first launch, right-click the app and
 > choose **Open** (or allow it in *System Settings → Privacy & Security*). Drag-to-download asks once
@@ -105,7 +116,14 @@ python3 -m venv .venv
 ### Language
 
 The UI language follows the system language (English is used for anything other than Korean or
-Japanese). Change it in **View → Settings → Language**, or start with `--lang en|ko|ja`.
+Japanese). Change it in **Settings → Language**, or start with `--lang en|ko|ja`.
+
+### Coming from Termius
+
+Termius keeps its hosts in an encrypted database, so they cannot be read directly. Export them in
+OpenSSH format with the Termius CLI (`termius export-ssh-config`), then choose
+**Home → Hosts → Import → Import OpenSSH config / Termius…**. Host names, ports, users, key paths,
+jump hosts and port forwards are imported; passwords are not.
 
 ## ⚖️ Comparison
 
@@ -119,11 +137,13 @@ Japanese). Change it in **View → Settings → Language**, or start with `--lan
 | **Terminal follows explorer** | ✅ | ❌ | ? | ? |
 | **Drag & drop to Windows Explorer** | ✅ | ❌ | ? | ✅ |
 | **Edit remote file → re-upload** | ✅ | ❌ | ? | ✅ |
-| **Import PuTTY / Tabby / MobaXterm sessions** | ✅ / ✅ / ✅ | — | ? | ? |
+| **Port forwarding (local / remote / SOCKS)** | ✅ | ✅ | ✅ | ✅ |
+| **Jump hosts** | ✅ | ✅ | ✅ | ✅ |
+| **Snippets** | ✅ | ❌ | ? | ✅ |
+| **Import PuTTY / Tabby / MobaXterm / SSH config** | ✅ / ✅ / ✅ / ✅ | — | ? | ? |
 | **Idle auto-disconnect** | ✅ | ? | ? | ? |
 | **Host-key verification** | ✅ | ✅ | ✅ | ✅ |
-| **Saved passwords** | 🟡 optional (DPAPI / Keychain) | ❌ by design | ✅ vault | ✅ master password |
-| **Port forwarding** | ❌ planned | ✅ | ✅ | ✅ |
+| **Saved passwords** | 🟡 optional (OS-protected, optional master password) | ❌ by design | ✅ vault | ✅ master password |
 | **X11 forwarding** | ❌ | ✅ | ✅ | ✅ |
 | **Serial console** | ❌ | ✅ | ✅ | ✅ |
 | **Platforms** | Windows, macOS | Windows, Unix | Windows, macOS, Linux | Windows |
@@ -131,7 +151,7 @@ Japanese). Change it in **View → Settings → Language**, or start with `--lan
 | **Account required** | No | No | No (sync optional) | No |
 | **License** | GPL-3.0-or-later | MIT | MIT | Proprietary freeware |
 
-<sub>✅ yes · ❌ no · 🟡 partial · ? not verified. Based on our understanding in September 2026 — corrections are welcome via pull request.</sub>
+<sub>✅ yes · ❌ no · 🟡 partial · ? not verified. Based on our understanding in October 2026 — corrections are welcome via pull request.</sub>
 
 ## 🛡️ Architecture & Security
 
@@ -140,10 +160,12 @@ no account, no analytics, no auto-update service.
 
 | Topic | How it works |
 | --- | --- |
-| **Where data lives** | Windows `%APPDATA%\JeopsokHeyou\`, macOS `~/Library/Application Support/JeopsokHeyou/` — `sessions.json`, `known_hosts`, `settings.json`. Nothing is written next to the program. |
-| **Passwords** | Not saved unless you tick *Save password*. Windows: encrypted with DPAPI (bound to your Windows account). macOS: stored in your login Keychain — `sessions.json` only holds a marker. |
-| **Private keys** | Only the key **path** is stored. OpenSSH format (convert PuTTY `.ppk` with PuTTYgen). SSH agent (Pageant/OpenSSH) is used for key sessions. |
-| **Host keys** | Trust on first use with the SHA256 fingerprint shown; a changed key **blocks** the connection. |
+| **Where data lives** | Windows `%APPDATA%\JeopsokHeyou\`, macOS `~/Library/Application Support/JeopsokHeyou/` — `sessions.json`, `tunnels.json`, `snippets.json`, `history.json`, `known_hosts`, `settings.json` (and `vault.json` when a master password is set). Nothing is written next to the program. |
+| **Passwords** | Not saved unless you tick *Save password*. By default: Windows DPAPI (bound to your Windows account) or your macOS login Keychain. With the optional master password: AES-256-GCM with a random data key, wrapped by scrypt-derived keys from the master password and from a one-time recovery key. Only secrets are locked — the session list stays readable. |
+| **Master password lost** | Unlock with the recovery key. If both are lost, *Reset* deletes only the saved secrets; sessions, groups and settings stay. There is no back door. |
+| **Private keys** | Only the key **path** is stored. OpenSSH format (convert PuTTY `.ppk` with PuTTYgen). SSH agent (Pageant/OpenSSH) is used for key sessions. Keys generated in the Keychain screen are written to `~/.ssh` and never overwrite an existing file. |
+| **Host keys** | Trust on first use with the SHA256 fingerprint shown; a changed key **blocks** the connection. Trusted keys can be reviewed and removed in *Known Hosts*. |
+| **Port forwarding** | Listens on `127.0.0.1` unless you choose another address. Imported MobaXterm tunnels that listened on all interfaces are switched to this PC only. |
 | **Remote file names** | Names containing `\`, `:`, `..` or Windows device names are sanitised so a malicious server cannot write outside the chosen folder. |
 | **Temporary copies** | Files opened for editing are copied to the system temp folder (`JeopsokHeyou/`) and cleaned up after 3 days. |
 
@@ -151,13 +173,16 @@ no account, no analytics, no auto-update service.
 
 ```mermaid
 flowchart LR
-    A[Connect] --> B{Host key in<br/>known_hosts?}
+    A[Connect] --> J{Jump host?}
+    J -- "yes" --> K[Connect to the jump host first<br/>then tunnel to the target]
+    J -- "no" --> B
+    K --> B{Host key in<br/>known_hosts?}
     B -- "no" --> C[Show SHA256 fingerprint] --> D{User trusts?}
     D -- "yes" --> E[Save to known_hosts]
     D -- "no" --> X[Cancel]
     B -- "matches" --> F[Authenticate<br/>password / key / agent]
     B -- "different" --> Y[Block: possible MITM]
-    E --> F --> G[Shell channel] & H[SFTP: browse] & I[SFTP: transfers]
+    E --> F --> G[Shell channel] & H[SFTP: browse] & I[SFTP: transfers] & P[Port forwards]
 ```
 
 ### Two-way folder sync
@@ -205,15 +230,14 @@ push; pushing a `v*` tag builds all installers and drafts a GitHub Release.
 | --- | --- |
 | UI | Qt 6 via PySide6, custom Finder-style theme and SVG icons |
 | Terminal | pyte (VT100/xterm emulation) with a custom Qt renderer, IME support |
-| SSH / SFTP | paramiko (OpenSSH-compatible, modern algorithms only) |
-| Crypto | cryptography / OpenSSL, bcrypt, PyNaCl (via paramiko) |
-| Secrets | Windows DPAPI (`CryptProtectData`) / macOS Keychain (`security`) |
-| Import | Windows registry / `~/.putty` (PuTTY), PyYAML (Tabby), `MobaXterm.ini` / `.mxtsessions` (MobaXterm) |
+| SSH / SFTP / forwarding | paramiko (OpenSSH-compatible, modern algorithms only) |
+| Crypto | cryptography / OpenSSL (AES-256-GCM, scrypt, ed25519), bcrypt, PyNaCl (via paramiko) |
+| Secrets | Windows DPAPI (`CryptProtectData`) / macOS Keychain (`security`), optional master-password vault |
+| Import | Windows registry / `~/.putty` (PuTTY), PyYAML (Tabby), `MobaXterm.ini` / `.mxtsessions` (MobaXterm), `~/.ssh/config` (OpenSSH, Termius) |
 
 ## 🗺️ Roadmap
 
 - Code-signed Windows installer and notarized macOS app
-- Port forwarding (local / remote / dynamic)
 - PuTTY `.ppk` key support
 - Mouse reporting for full-screen programs (htop, mc) and line reflow on resize
 
@@ -260,8 +284,8 @@ Third-party libraries (Qt/PySide6, paramiko, pyte, …) and the Gaegu font keep 
 all compatible with GPL-3.0 — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and
 [licenses/](licenses/). The app icon was generated with ChatGPT; all other icons are original SVGs.
 
-PuTTY, Tabby, MobaXterm, Windows, macOS and Finder are trademarks of their respective owners. JeopsokHeyou is an
-independent project and is not affiliated with them.
+PuTTY, Tabby, MobaXterm, Termius, Windows, macOS and Finder are trademarks of their respective owners.
+JeopsokHeyou is an independent project and is not affiliated with them.
 
 ## 🤝 Contributing & Security
 

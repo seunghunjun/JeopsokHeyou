@@ -88,9 +88,26 @@ def main() -> int:
     demo = Session(host="127.0.0.1", port=2299, user="tester", name="web-01", group="Development")
     w.store.sessions.insert(0, demo)
     w.store.save()
-    w.settings["recent"] = [demo.id]
+    from jeopsokheyou.forwarding import Forward
+    from jeopsokheyou.tunnels import Tunnel
+    prod = next((s for s in w.store.sessions if s.group == "Production"), demo)
+    w.tunnels.upsert(Tunnel(name="Production database", session_id=prod.id,
+                            forward=Forward("L", "127.0.0.1", 15432, "db.internal", 5432).to_dict()))
+    w.tunnels.upsert(Tunnel(name="SOCKS proxy", session_id=demo.id, forward=Forward("D", "127.0.0.1", 1080).to_dict()))
+    w.tunnels.upsert(Tunnel(name="Share local web app", session_id=demo.id,
+                            forward=Forward("R", "localhost", 8080, "127.0.0.1", 3000).to_dict()))
+    # show a subgroup in the tree (Production › Databases)
+    for s in w.store.sessions:
+        if s.group == "Production" and "db" in s.name.lower():
+            s.group = "Production / Databases"
+    w.store.save()
+    w.reload_sessions()
     w.apply_appearance(mode="light", ui_font="default")
-    shot(w, "welcome.png")
+    w.home.show_page("hosts")
+    shot(w, "home.png")
+    w.home.show_page("forwarding")
+    shot(w, "port-forwarding.png", frame=False)
+    w.home.show_page("hosts")
 
     w.open_session(demo, "pw")
     tab = w.current_tab()
@@ -120,9 +137,9 @@ def main() -> int:
     pump(8, lambda: tab.explorer.tree.topLevelItemCount() > 0)
     shot(w, "main-dark.png")
 
-    # close-up of the sidebar (groups)
-    side = shot(w.sessions_dock, None, frame=False)
-    side.save(OUT / "sidebar-dark.png", optimize=True)
+    # Home tab in dark mode
+    w.show_home("hosts")
+    shot(w, "home-dark.png", frame=False)
     w.apply_appearance(mode="light")
 
     # demo animation (webp)
