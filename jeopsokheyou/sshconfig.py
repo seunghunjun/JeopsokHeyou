@@ -2,9 +2,6 @@
 # Copyright (C) 2026 Seunghun Jun
 """Import hosts from an OpenSSH client config file (~/.ssh/config).
 
-This is also how Termius hosts are imported: Termius keeps its data in an encrypted database,
-but can write it out in this format (``termius export-ssh-config``).
-
 Supported: Host blocks (several aliases per line, wildcards and ``!`` negations for defaults),
 Include, HostName (with %h), Port, User, IdentityFile, ProxyJump, LocalForward, RemoteForward and
 DynamicForward. Match blocks are skipped. Like ssh itself, the first value found for an option wins.

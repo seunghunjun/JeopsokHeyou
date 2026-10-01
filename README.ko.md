@@ -41,7 +41,7 @@
 - **🔐 선택형 마스터 비밀번호** — 기본은 꺼짐. 켜면 저장된 비밀번호와 키 암호를 마스터 비밀번호로 암호화(AES-256-GCM + scrypt)하고, 한 번만 보여 주는 복구 키와 미사용 시 자동 잠금을 제공합니다.
 - **🔑 키체인** — SSH 키와 저장된 비밀번호를 한곳에서 확인하고, ed25519 키를 만들고 공개키를 복사합니다.
 - **⌨️ 스니펫** — 자주 쓰는 명령을 저장해 두고 터미널에 붙여넣거나 바로 실행합니다(Ctrl+Shift+P).
-- **📥 클릭 한 번으로 가져오기** — **PuTTY**, **Tabby**, **MobaXterm**(MobaSSHTunnel 터널 포함), **OpenSSH config** 파일. **Termius** 호스트도 이 방법으로 가져옵니다.
+- **📥 클릭 한 번으로 가져오기** — **PuTTY**, **Tabby**, **MobaXterm**(MobaSSHTunnel 터널 포함), **OpenSSH config**(`~/.ssh/config`) 파일.
 - **⏱️ 미사용 시 자동 접속 종료** — 세션별 또는 전체 설정, 종료 1분 전 경고, 파일 전송 중에는 끊지 않습니다.
 - **🛡️ 기본이 안전** — 호스트 키 검증(처음 접속 시 확인, 바뀌면 차단)과 알려진 호스트 화면, 요청할 때만 비밀번호 저장, 개인키는 경로만 저장합니다.
 - **🎨 Finder 스타일 UI** — 라이트/다크 테마, 선명한 벡터 아이콘, 한글 손글씨 글꼴(Gaegu) 선택 가능.
@@ -116,9 +116,9 @@ UI 언어는 시스템 언어를 따릅니다(한국어·일본어 외에는 영
 
 ### Termius에서 옮겨 오기
 
-Termius는 호스트를 암호화된 DB에 저장하므로 직접 읽을 수 없습니다. Termius CLI로 OpenSSH 형식으로 내보낸 뒤
-(`termius export-ssh-config`), **홈 → 호스트 → 가져오기 → OpenSSH config / Termius 가져오기…** 를 선택하세요.
-호스트 이름·포트·사용자·키 경로·점프 호스트·포트 포워딩을 가져오며, 비밀번호는 가져오지 않습니다.
+Termius는 호스트를 암호화해 저장하고 호스트 내보내기 기능이 없어서, 자동으로 가져올 수 없습니다.
+**홈 → 호스트 → 새 호스트**로 등록하세요(그룹·하위 그룹도 같은 방식으로 만들 수 있습니다). 같은 서버를 `~/.ssh/config`에
+정리해 두셨다면 **홈 → 호스트 → 가져오기 → OpenSSH config 가져오기…** 로 그 파일을 가져올 수 있습니다.
 
 ## ⚖️ 비교
 
@@ -227,7 +227,7 @@ python -m venv .venv
 | SSH / SFTP / 포워딩 | paramiko (OpenSSH 호환, 최신 알고리즘만) |
 | 암호화 | cryptography / OpenSSL (AES-256-GCM, scrypt, ed25519), bcrypt, PyNaCl (paramiko 경유) |
 | 비밀정보 | Windows DPAPI (`CryptProtectData`) / macOS 키체인 (`security`), 선택형 마스터 비밀번호 볼트 |
-| 가져오기 | Windows 레지스트리 / `~/.putty` (PuTTY), PyYAML (Tabby), `MobaXterm.ini` / `.mxtsessions` (MobaXterm), `~/.ssh/config` (OpenSSH, Termius) |
+| 가져오기 | Windows 레지스트리 / `~/.putty` (PuTTY), PyYAML (Tabby), `MobaXterm.ini` / `.mxtsessions` (MobaXterm), `~/.ssh/config` (OpenSSH) |
 
 ## 🗺️ 로드맵
 

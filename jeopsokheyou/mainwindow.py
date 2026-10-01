@@ -764,7 +764,7 @@ class MainWindow(QMainWindow):
         self._act(m, tr("Import PuTTY sessions"), self.import_putty)
         self._act(m, tr("Import Tabby sessions"), self.import_tabby)
         self._act(m, tr("Import MobaXterm sessions…"), self.import_mobaxterm)
-        self._act(m, tr("Import OpenSSH config / Termius…"), self.import_ssh_config)
+        self._act(m, tr("Import OpenSSH config…"), self.import_ssh_config)
         m.addSeparator()
         self._act(m, tr("Lock saved passwords"), self.lock_vault, "Ctrl+Shift+L")
         self._act(m, tr("Exit"), self.close)
@@ -1054,7 +1054,7 @@ class MainWindow(QMainWindow):
         m.addAction(tr("Import PuTTY sessions"), self.import_putty)
         m.addAction(tr("Import Tabby sessions"), self.import_tabby)
         m.addAction(tr("Import MobaXterm sessions…"), self.import_mobaxterm)
-        m.addAction(tr("Import OpenSSH config / Termius…"), self.import_ssh_config)
+        m.addAction(tr("Import OpenSSH config…"), self.import_ssh_config)
         m.exec(self.session_tree.viewport().mapToGlobal(pos))
 
     def _groups(self):
@@ -1190,8 +1190,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         self._import_sessions("SSH config", sshconfig.import_ssh_config(Path(path)),
-                              tr("Passwords are not part of an SSH config file; enter them when you first connect.\n"
-                                 "From Termius, export your hosts first with: {cmd}", cmd="termius export-ssh-config"))
+                              tr("Passwords are not part of an SSH config file; enter them when you first connect."))
 
     def import_tabby(self):
         if not config.TABBY_CONFIG.exists():

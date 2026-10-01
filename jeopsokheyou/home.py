@@ -379,7 +379,7 @@ class HostsPage(QWidget):
         m.addAction(tr("Import PuTTY sessions"), self.main.import_putty)
         m.addAction(tr("Import Tabby sessions"), self.main.import_tabby)
         m.addAction(tr("Import MobaXterm sessions…"), self.main.import_mobaxterm)
-        m.addAction(tr("Import OpenSSH config / Termius…"), self.main.import_ssh_config)
+        m.addAction(tr("Import OpenSSH config…"), self.main.import_ssh_config)
         imp.setMenu(m)
         self.import_menu = m
         top.addWidget(imp)

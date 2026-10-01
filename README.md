@@ -45,7 +45,7 @@ No account required. Free and open source (GPL-3.0).
 - **🔐 Optional master password** — off by default; when on, saved passwords and key passphrases are encrypted with it (AES-256-GCM + scrypt), with a one-time recovery key and auto-lock when idle.
 - **🔑 Keychain** — see your SSH keys and saved passwords in one place, generate an ed25519 key and copy its public key.
 - **⌨️ Snippets** — save frequently used commands and paste or run them in the terminal (Ctrl+Shift+P).
-- **📥 One-click import** — sessions from **PuTTY**, **Tabby**, **MobaXterm** (including MobaSSHTunnel tunnels) and **OpenSSH config** files — which is also how to bring hosts over from **Termius**.
+- **📥 One-click import** — sessions from **PuTTY**, **Tabby**, **MobaXterm** (including MobaSSHTunnel tunnels) and **OpenSSH config** (`~/.ssh/config`) files.
 - **⏱️ Idle auto-disconnect** — per session or global, with a one-minute warning; never disconnects during a transfer.
 - **🛡️ Safe by default** — host-key verification (trust on first use, block on mismatch) with a Known Hosts screen, passwords not saved unless you ask, private keys referenced by path only.
 - **🎨 Finder-style UI** — light and dark themes, crisp vector icons, Korean handwriting font (Gaegu) as an option.
@@ -120,10 +120,9 @@ Japanese). Change it in **Settings → Language**, or start with `--lang en|ko|j
 
 ### Coming from Termius
 
-Termius keeps its hosts in an encrypted database, so they cannot be read directly. Export them in
-OpenSSH format with the Termius CLI (`termius export-ssh-config`), then choose
-**Home → Hosts → Import → Import OpenSSH config / Termius…**. Host names, ports, users, key paths,
-jump hosts and port forwards are imported; passwords are not.
+Termius keeps its hosts encrypted and has no host export, so they cannot be imported automatically.
+Add them under **Home → Hosts → New host** (groups and subgroups work the same way), or, if you keep the
+same servers in `~/.ssh/config`, import that file with **Home → Hosts → Import → Import OpenSSH config…**.
 
 ## ⚖️ Comparison
 
@@ -233,7 +232,7 @@ push; pushing a `v*` tag builds all installers and drafts a GitHub Release.
 | SSH / SFTP / forwarding | paramiko (OpenSSH-compatible, modern algorithms only) |
 | Crypto | cryptography / OpenSSL (AES-256-GCM, scrypt, ed25519), bcrypt, PyNaCl (via paramiko) |
 | Secrets | Windows DPAPI (`CryptProtectData`) / macOS Keychain (`security`), optional master-password vault |
-| Import | Windows registry / `~/.putty` (PuTTY), PyYAML (Tabby), `MobaXterm.ini` / `.mxtsessions` (MobaXterm), `~/.ssh/config` (OpenSSH, Termius) |
+| Import | Windows registry / `~/.putty` (PuTTY), PyYAML (Tabby), `MobaXterm.ini` / `.mxtsessions` (MobaXterm), `~/.ssh/config` (OpenSSH) |
 
 ## 🗺️ Roadmap
 

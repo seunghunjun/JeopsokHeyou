@@ -42,7 +42,7 @@ JeopsokHeyou(ジョプソクヘユ、韓国語で「つなごうよ」をくだ�
 - **🔐 任意のマスターパスワード** — 既定はオフ。有効にすると保存したパスワードと鍵のパスフレーズをマスターパスワードで暗号化(AES-256-GCM + scrypt)し、一度だけ表示される回復キーと、未使用時の自動ロックを提供します。
 - **🔑 キーチェーン** — SSH 鍵と保存済みパスワードを一か所で確認し、ed25519 鍵の生成と公開鍵のコピーができます。
 - **⌨️ スニペット** — よく使うコマンドを保存し、ターミナルに貼り付けたりすぐ実行したりできます(Ctrl+Shift+P)。
-- **📥 ワンクリック読み込み** — **PuTTY**、**Tabby**、**MobaXterm**(MobaSSHTunnel のトンネルを含む)、**OpenSSH config** ファイル。**Termius** のホストもこの方法で移せます。
+- **📥 ワンクリック読み込み** — **PuTTY**、**Tabby**、**MobaXterm**(MobaSSHTunnel のトンネルを含む)、**OpenSSH config**(`~/.ssh/config`)ファイル。
 - **⏱️ 未使用時の自動切断** — セッション単位または全体で設定、切断 1 分前に警告、ファイル転送中は切断しません。
 - **🛡️ 既定で安全** — ホスト鍵の検証(初回接続時に確認、変わったらブロック)と既知のホスト画面、パスワードは求められたときだけ保存、秘密鍵はパスのみ保存します。
 - **🎨 Finder 風の UI** — ライト/ダークテーマ、くっきりしたベクターアイコン、韓国語の手書きフォント(Gaegu)も選べます。
@@ -117,9 +117,9 @@ UI の言語はシステムの言語に従います(韓国語・日本語以外�
 
 ### Termius から移行する
 
-Termius はホストを暗号化されたデータベースに保存しているため、直接は読み込めません。Termius CLI で OpenSSH 形式に書き出してから
-(`termius export-ssh-config`)、**ホーム → ホスト → 読み込み → OpenSSH config / Termius から読み込む…** を選んでください。
-ホスト名・ポート・ユーザー・鍵のパス・踏み台ホスト・ポート転送を読み込み、パスワードは読み込みません。
+Termius はホストを暗号化して保存し、ホストの書き出し機能もないため、自動では読み込めません。
+**ホーム → ホスト → 新しいホスト** で登録してください(グループ・サブグループも同じように作れます)。同じサーバーを `~/.ssh/config`
+にまとめている場合は、**ホーム → ホスト → 読み込み → OpenSSH config から読み込む…** でそのファイルを読み込めます。
 
 ## ⚖️ 比較
 
@@ -228,7 +228,7 @@ python -m venv .venv
 | SSH / SFTP / 転送 | paramiko (OpenSSH 互換、最新のアルゴリズムのみ) |
 | 暗号 | cryptography / OpenSSL (AES-256-GCM、scrypt、ed25519)、bcrypt、PyNaCl (paramiko 経由) |
 | 秘密情報 | Windows DPAPI (`CryptProtectData`) / macOS キーチェーン (`security`)、任意のマスターパスワードのボールト |
-| 読み込み | Windows レジストリ / `~/.putty` (PuTTY)、PyYAML (Tabby)、`MobaXterm.ini` / `.mxtsessions` (MobaXterm)、`~/.ssh/config` (OpenSSH、Termius) |
+| 読み込み | Windows レジストリ / `~/.putty` (PuTTY)、PyYAML (Tabby)、`MobaXterm.ini` / `.mxtsessions` (MobaXterm)、`~/.ssh/config` (OpenSSH) |
 
 ## 🗺️ ロードマップ
 

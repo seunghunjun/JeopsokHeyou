@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Seunghun Jun
-"""Import of OpenSSH client config files (~/.ssh/config, also what Termius exports)."""
+"""Import of OpenSSH client config files (~/.ssh/config)."""
 import os
 import shutil
 import sys
