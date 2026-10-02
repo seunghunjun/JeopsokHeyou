@@ -39,7 +39,7 @@ No account required. Free and open source (GPL-3.0).
 - **🔗 Two-way folder sync** — `cd` in the terminal and the explorer follows; open a folder in the explorer and the terminal quietly `cd`s there (bash/zsh). It never types into a running program or over a half-written command.
 - **🖱️ Drag & drop both ways** — drop files from Explorer or Finder to upload; drag remote files onto a folder window or the desktop to download there. Asks before overwriting a file that already exists (overwrite / skip / cancel). Background transfers with progress and cancel; resizable columns that remember their widths.
 - **✏️ Edit remote files locally** — double-click to open in your usual app; save and JeopsokHeyou offers to upload the change (only when the content really changed). "Open with…" is built in.
-- **🪟 Tabs & split panes** — split left/right or top/bottom on the same connection, close any pane with one click.
+- **🪟 Tabs & split panes** — split left/right or top/bottom on the same connection, close any pane with one click. Long lines re-wrap when a pane gets wider or narrower.
 - **🔀 Port forwarding** — local (`-L`), remote (`-R`) and dynamic SOCKS4/5 (`-D`) forwards, opened with a session or kept running on their own as tunnels with autostart, automatic reconnect and live connection counts.
 - **🪜 Jump hosts** — connect through one or more bastion servers (ProxyJump), for terminals and tunnels alike.
 - **🔐 Optional master password** — off by default; when on, saved passwords and key passphrases are encrypted with it (AES-256-GCM + scrypt), with a one-time recovery key and auto-lock when idle.
@@ -238,7 +238,7 @@ push; pushing a `v*` tag builds all installers and drafts a GitHub Release.
 
 - Code-signed Windows installer and notarized macOS app
 - PuTTY `.ppk` key support
-- Mouse reporting for full-screen programs (htop, mc) and line reflow on resize
+- Mouse reporting for full-screen programs (htop, mc)
 
 <a id="code-signing-policy"></a>
 
