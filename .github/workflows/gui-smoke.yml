@@ -1,0 +1,76 @@
+name: GUI smoke (macOS)
+
+# Runs the real app on a real macOS desktop session (no Mac needed locally):
+# 1) drives the UI against a local fake SSH/SFTP server and screenshots every step,
+# 2) builds the DMG, installs the app from it like a user would, launches it and screenshots the screen.
+# Screenshots are uploaded as the "gui-smoke-<arch>" artifact.
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+    branches: ["feature/**"]   # check feature branches on a real Mac before they are merged
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    name: macOS ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14          # Apple Silicon
+            arch: arm64
+          - os: macos-15-intel    # Intel
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-lock.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-lock.txt pyinstaller pillow
+
+      - name: UI walkthrough on the real macOS window system
+        run: python tools/gui_smoke.py
+
+      - name: Build the DMG
+        if: always()
+        run: python tools/build_release.py --skip-tests
+
+      - name: Install from the DMG and launch it
+        if: always()
+        run: |
+          set -x
+          mkdir -p gui-smoke
+          DMG=$(ls dist/*-macos-${{ matrix.arch }}.dmg)
+          hdiutil attach "$DMG" -nobrowse -mountpoint /Volumes/JeopsokHeyou
+          rm -rf ~/Applications/JeopsokHeyou.app && mkdir -p ~/Applications
+          cp -R /Volumes/JeopsokHeyou/JeopsokHeyou.app ~/Applications/
+          hdiutil detach /Volumes/JeopsokHeyou
+          APP=~/Applications/JeopsokHeyou.app/Contents/MacOS/JeopsokHeyou
+          file "$APP"
+          "$APP" --self-test gui-smoke/installed-self-test.json
+          cat gui-smoke/installed-self-test.json
+          open ~/Applications/JeopsokHeyou.app
+          sleep 12
+          screencapture -x gui-smoke/installed-app-screen.png || true
+          pkill -f JeopsokHeyou.app || true
+
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: gui-smoke-${{ matrix.arch }}
+          path: gui-smoke/
+          if-no-files-found: warn

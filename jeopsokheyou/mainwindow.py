@@ -45,6 +45,9 @@ class TerminalPane(TerminalWidget):
     def __init__(self, font, settings, session: Session, parent=None):
         super().__init__(font, settings.get("scrollback", 5000), session.encoding, parent)
         self.screen.reflow = bool(settings.get("terminal_reflow", True))
+        scheme = (settings.get("color_schemes") or {}).get(settings.get("terminal_scheme", ""))
+        if scheme:
+            self.apply_scheme(scheme)
         self.session = session
         self.chan = None
         self.reader = None
@@ -766,6 +769,7 @@ class MainWindow(QMainWindow):
         self._act(m, tr("Import Tabby sessions"), self.import_tabby)
         self._act(m, tr("Import MobaXterm sessions…"), self.import_mobaxterm)
         self._act(m, tr("Import OpenSSH config…"), self.import_ssh_config)
+        self._act(m, tr("Import iTerm2 profiles…"), self.import_iterm)
         m.addSeparator()
         self._act(m, tr("Lock saved passwords"), self.lock_vault, "Ctrl+Shift+L")
         self._act(m, tr("Exit"), self.close)
@@ -778,6 +782,8 @@ class MainWindow(QMainWindow):
         self._act(m, tr("Next tab"), lambda: self._cycle(1), "Ctrl+Tab")
         self._act(m, tr("Previous tab"), lambda: self._cycle(-1), "Ctrl+Shift+Tab")
         self._act(m, tr("Snippets…"), self.pick_snippet, "Ctrl+Shift+P")
+        # Find: ⌘F on macOS (like iTerm2); Ctrl+Shift+G elsewhere (Ctrl+F belongs to the shell, Ctrl+Shift+F is port forwarding)
+        self._act(m, tr("Find…"), self.find_in_terminal, "Ctrl+F" if paths.IS_MAC else "Ctrl+Shift+G")
         m.addSeparator()
         self._act(m, tr("Copy  (Ctrl+Shift+C / drag)"), lambda: None)
         self._act(m, tr("Paste  (Ctrl+Shift+V / right-click)"), lambda: None)
@@ -876,10 +882,13 @@ class MainWindow(QMainWindow):
             v = d.values()
             self.settings["idle_minutes"] = v["idle_minutes"]
             self.settings["terminal_reflow"] = v["terminal_reflow"]
+            self.settings["terminal_scheme"] = v["terminal_scheme"]
+            scheme = (self.settings.get("color_schemes") or {}).get(v["terminal_scheme"])
             for i in range(self.tabs.count()):
                 tab = self.tabs.widget(i)
                 for p in getattr(tab, "panes", []):
                     p.screen.reflow = v["terminal_reflow"]
+                    p.apply_scheme(scheme)
             if v["language"] != self.settings.get("language", "system"):
                 self.settings["language"] = v["language"]
                 config.save_settings(self.settings)
@@ -1061,6 +1070,7 @@ class MainWindow(QMainWindow):
         m.addAction(tr("Import Tabby sessions"), self.import_tabby)
         m.addAction(tr("Import MobaXterm sessions…"), self.import_mobaxterm)
         m.addAction(tr("Import OpenSSH config…"), self.import_ssh_config)
+        m.addAction(tr("Import iTerm2 profiles…"), self.import_iterm)
         m.exec(self.session_tree.viewport().mapToGlobal(pos))
 
     def _groups(self):
@@ -1166,6 +1176,23 @@ class MainWindow(QMainWindow):
     def import_putty(self):
         self._import_sessions("PuTTY", config.import_putty_sessions(),
                               tr("PuTTY does not store passwords, so enter the password when you first connect."))
+
+    def import_iterm(self):
+        from PySide6.QtWidgets import QFileDialog
+        from . import itermimport
+        found = itermimport.default_files()
+        start = str(found[0]) if found else str(Path.home())
+        path, _ = QFileDialog.getOpenFileName(
+            self, tr("Select iTerm2 profiles"), start,
+            tr("iTerm2 profiles (*.plist *.json)") + ";;" + tr("All files (*)"))
+        if not path:
+            return
+        sessions, skipped = itermimport.import_iterm_sessions(Path(path))
+        note = tr("Profiles that run ssh became sessions; their first tag became the group. "
+                  "Passwords are not stored in iTerm2 profiles; enter them when you first connect.")
+        if skipped:
+            note += "\n" + tr("{n} profiles without an ssh command (local shells) were skipped.", n=skipped)
+        self._import_sessions("iTerm2", sessions, note)
 
     def import_mobaxterm(self):
         from PySide6.QtWidgets import QFileDialog
@@ -1370,6 +1397,12 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(tab)
         pane.send_text(snip.text_to_send())
         pane.setFocus()
+
+    def find_in_terminal(self):
+        tab = self.current_tab()
+        pane = (tab.active or tab.panes[0]) if tab and tab.panes else None
+        if pane is not None:
+            pane.open_search()
 
     def pick_snippet(self):
         if not self.snippets.snippets:

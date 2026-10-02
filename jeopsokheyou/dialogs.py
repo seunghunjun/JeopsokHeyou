@@ -207,6 +207,18 @@ class SettingsDialog(QDialog):
         form.addRow(tr("Appearance"), self.mode)
         form.addRow(tr("UI font"), self.ui_font)
         form.addRow(tr("Terminal font"), term_row)
+        # Terminal colors: built-in or an imported iTerm2 color scheme (.itermcolors)
+        self._settings = settings
+        self.scheme = QComboBox()
+        self._fill_schemes(settings.get("terminal_scheme", ""))
+        scheme_import = QPushButton(tr("Import iTerm2 color scheme…"))
+        scheme_import.clicked.connect(self._import_scheme)
+        scheme_row = QWidget()
+        sl = QHBoxLayout(scheme_row)
+        sl.setContentsMargins(0, 0, 0, 0)
+        sl.addWidget(self.scheme, 1)
+        sl.addWidget(scheme_import)
+        form.addRow(tr("Terminal colors"), scheme_row)
         self.idle = QComboBox()
         for mins, label in IDLE_CHOICES:
             self.idle.addItem(tr(label), mins)
@@ -240,6 +252,26 @@ class SettingsDialog(QDialog):
         bb.rejected.connect(self.reject)
         form.addRow(bb)
 
+    def _fill_schemes(self, current: str):
+        self.scheme.clear()
+        self.scheme.addItem(tr("Default"), "")
+        for name in sorted(self._settings.get("color_schemes") or {}, key=str.lower):
+            self.scheme.addItem(name, name)
+        self.scheme.setCurrentIndex(max(0, self.scheme.findData(current)))
+
+    def _import_scheme(self):
+        from . import itermimport
+        path, _ = QFileDialog.getOpenFileName(self, tr("Select an iTerm2 color scheme"), "",
+                                              tr("iTerm2 color schemes (*.itermcolors)") + ";;" + tr("All files (*)"))
+        if not path:
+            return
+        scheme = itermimport.load_itermcolors(path)
+        if scheme is None:
+            QMessageBox.warning(self, tr("Terminal colors"), tr("This is not an iTerm2 color scheme."))
+            return
+        self._settings.setdefault("color_schemes", {})[scheme["name"]] = scheme
+        self._fill_schemes(scheme["name"])
+
     def _preview(self):
         self._theme.manager.apply(QApplication.instance(), self.mode.currentData(), self.ui_font.currentData())
 
@@ -256,4 +288,5 @@ class SettingsDialog(QDialog):
             "idle_minutes": int(self.idle.currentData()),
             "language": self.language.currentData(),
             "terminal_reflow": self.reflow.isChecked(),
+            "terminal_scheme": self.scheme.currentData() or "",
         }

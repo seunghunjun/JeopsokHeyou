@@ -303,8 +303,16 @@ class TerminalWidget(QWidget):
         self.preedit = ""
 
         self._colors: dict[str, QColor] = {}
+        self.palette_hex = dict(PALETTE)
         self.fg_default = QColor(DEFAULT_FG)
         self.bg_default = QColor(DEFAULT_BG)
+        self.cursor_color = QColor(CURSOR_COLOR)
+        self.selection_color = QColor(SELECTION_BG)
+        # find in terminal
+        self.search_query = ""
+        self.search_hits: list[tuple[int, int, int]] = []   # (abs_row, first_col, last_col)
+        self.search_index = -1
+        self._search_bar = None
 
         self.sbar = QScrollBar(Qt.Orientation.Vertical, self)
         self.sbar.valueChanged.connect(self._on_scrollbar)
@@ -443,6 +451,8 @@ class TerminalWidget(QWidget):
 
     def resizeEvent(self, e):
         self._recalc_size()
+        if self._search_bar is not None and self._search_bar.isVisible():
+            self._search_bar.place()
         super().resizeEvent(e)
 
     # ------------------------------------------------------------ scrolling
@@ -514,11 +524,11 @@ class TerminalWidget(QWidget):
         if name == "default":
             return self.fg_default if fg else self.bg_default
         key = name
-        if fg and bold and name in PALETTE and not name.startswith("bright"):
+        if fg and bold and name in self.palette_hex and not name.startswith("bright"):
             key = "bright" + name
         c = self._colors.get(key)
         if c is None:
-            hexv = PALETTE.get(key)
+            hexv = self.palette_hex.get(key)
             if hexv is None:
                 hexv = "#" + key if len(key) == 6 else DEFAULT_FG
             c = QColor(hexv)
@@ -533,7 +543,7 @@ class TerminalWidget(QWidget):
         cw, ch = self.cw, self.ch
         top = self._top_abs()
         sel = self._sel_range()
-        sel_bg = QColor(SELECTION_BG)
+        sel_bg = self.selection_color
         for vy in range(s.lines):
             abs_row = top + vy
             line = self._line_at(abs_row)
@@ -592,6 +602,7 @@ class TerminalWidget(QWidget):
                     run.append(d)
                 else:
                     self._draw_run(p, x, y, d, key, fgc)
+        self._paint_search(p, top)
         self._paint_cursor(p)
         p.end()
 
@@ -625,7 +636,7 @@ class TerminalWidget(QWidget):
             p.fillRect(r.x(), r.y(), w, r.height(), QColor("#3a3d41"))
             p.setPen(QColor("#ffffff"))
             p.drawText(QPointF(r.x(), r.y() + self.ascent), self.preedit)
-            p.setPen(QPen(QColor(CURSOR_COLOR)))
+            p.setPen(QPen(self.cursor_color))
             p.drawLine(r.x(), r.bottom(), r.x() + w, r.bottom())
             return
         line = s.buffer[s.cursor.y]
@@ -633,14 +644,102 @@ class TerminalWidget(QWidget):
         if c.data and c.data > "\x7f" and s.cursor.x + 1 < s.columns and line[s.cursor.x + 1].data == "":
             r.setWidth(self.cw * 2)
         if self.hasFocus():
-            p.fillRect(r, QColor(CURSOR_COLOR))
+            p.fillRect(r, self.cursor_color)
             if c.data.strip():
                 p.setFont(self.bold_font if c.bold else self.term_font)
                 p.setPen(self.bg_default)
                 p.drawText(QPointF(r.x(), r.y() + self.ascent), c.data)
         else:
-            p.setPen(QPen(QColor(CURSOR_COLOR)))
+            p.setPen(QPen(self.cursor_color))
             p.drawRect(r.adjusted(0, 0, -1, -1))
+
+    # ------------------------------------------------------------ color scheme
+    def apply_scheme(self, scheme: dict | None) -> None:
+        """Terminal colors: None = built-in scheme; otherwise {"ansi": [16 hex], "fg", "bg", "cursor", "selection"}."""
+        self.palette_hex = dict(PALETTE)
+        fg, bg, cur, sel = DEFAULT_FG, DEFAULT_BG, CURSOR_COLOR, SELECTION_BG
+        if scheme:
+            names = ["black", "red", "green", "brown", "blue", "magenta", "cyan", "white"]
+            ansi = list(scheme.get("ansi") or [])
+            for i, n in enumerate(names + ["bright" + n for n in names]):
+                if i < len(ansi) and ansi[i]:
+                    self.palette_hex[n] = ansi[i]
+            fg = scheme.get("fg") or fg
+            bg = scheme.get("bg") or bg
+            cur = scheme.get("cursor") or cur
+            sel = scheme.get("selection") or sel
+        self.fg_default, self.bg_default = QColor(fg), QColor(bg)
+        self.cursor_color, self.selection_color = QColor(cur), QColor(sel)
+        self._colors.clear()
+        self.update()
+
+    # ------------------------------------------------------------ find
+    def open_search(self) -> None:
+        from .termsearch import SearchBar
+        if self._search_bar is None:
+            self._search_bar = SearchBar(self)
+        bar = self._search_bar
+        sel = self.selected_text()
+        if sel and "\n" not in sel:
+            bar.edit.setText(sel)
+        bar.place()
+        bar.show()
+        bar.raise_()
+        bar.edit.setFocus()
+        bar.edit.selectAll()
+        self.search(bar.edit.text())
+
+    def close_search(self) -> None:
+        if self._search_bar is not None:
+            self._search_bar.hide()
+        self.search_query, self.search_hits, self.search_index = "", [], -1
+        self.update()
+        self.setFocus()
+
+    def search(self, query: str) -> int:
+        """Find all matches; jump to the newest one (closest to the prompt). Returns the number of matches."""
+        from .termsearch import find_hits
+        s = self.screen
+        first = s.sb_total - len(s.scrollback)
+        rows = [(first + i, line) for i, line in enumerate(s.scrollback)]
+        rows += [(s.sb_total + y, s.buffer[y]) for y in range(s.lines)]
+        self.search_query = query
+        self.search_hits = find_hits(rows, s.columns, query)
+        self.search_index = len(self.search_hits) - 1
+        self._show_hit()
+        return len(self.search_hits)
+
+    def search_step(self, direction: int) -> None:
+        """direction 1 = previous (older, upward), -1 = next (newer, downward)."""
+        if self.search_query and not self.search_hits:
+            self.search(self.search_query)
+        if not self.search_hits:
+            return
+        self.search_index = (self.search_index - direction) % len(self.search_hits)
+        self._show_hit()
+
+    def _show_hit(self) -> None:
+        if self._search_bar is not None:
+            self._search_bar.show_count(self.search_index, len(self.search_hits), self.search_query)
+        if 0 <= self.search_index < len(self.search_hits):
+            row = self.search_hits[self.search_index][0]
+            top = self._top_abs()
+            if not (top <= row < top + self.screen.lines):
+                # bring the match into view, a few rows below the top edge
+                wanted_top = row - min(3, self.screen.lines // 3)
+                self.scroll_offset = max(0, min(len(self.screen.scrollback), self.screen.sb_total - wanted_top))
+                self._update_scrollbar()
+        self.update()
+
+    def _paint_search(self, p: QPainter, top: int) -> None:
+        if not self.search_hits:
+            return
+        bottom = top + self.screen.lines
+        other, current = QColor(255, 214, 10, 80), QColor(255, 149, 0, 150)
+        for i, (row, c0, c1) in enumerate(self.search_hits):
+            if top <= row < bottom:
+                p.fillRect(c0 * self.cw, (row - top) * self.ch, (c1 - c0 + 1) * self.cw, self.ch,
+                           current if i == self.search_index else other)
 
     # ------------------------------------------------------------ keyboard
     def event(self, e):

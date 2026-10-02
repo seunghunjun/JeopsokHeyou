@@ -44,3 +44,6 @@ sessions/
 id_rsa*
 id_ed25519*
 id_ecdsa*
+
+# GUI smoke screenshots (tools/gui_smoke.py)
+gui-smoke/
