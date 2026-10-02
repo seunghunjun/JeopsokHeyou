@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # Copyright (C) 2026 Seunghun Jun
-"""Home tab (Termius-style): a menu on the left and one screen per menu item —
+"""Home tab: a menu on the left and one screen per menu item —
 Hosts, Keychain, Port Forwarding, Snippets, Known Hosts, History — plus Settings."""
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ def selected_rows(t: QTableWidget) -> list[int]:
 
 # ------------------------------------------------------------------ cards
 class Card(QFrame):
-    """A Termius-style card: colored icon tile, title, subtitle. Double-click opens; right-click shows a menu."""
+    """A host/group card: colored icon tile, title, subtitle. Double-click opens; right-click shows a menu."""
     activated = Signal()
     clicked = Signal()
     menu_requested = Signal(QPoint)
@@ -425,7 +425,7 @@ class HostsPage(QWidget):
         scroll.setWidget(inner)
         lay.addWidget(scroll, 1)
         outer.addWidget(body, 1)
-        # Right-side edit panel (like Termius)
+        # Right-side edit panel
         self.panel = QFrame()
         self.panel.setObjectName("EditPanel")
         self.panel.setFixedWidth(500)

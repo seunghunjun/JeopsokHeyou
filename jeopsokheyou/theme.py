@@ -262,7 +262,7 @@ QLabel#Muted {{ color: {t.muted}; }}
 QLabel#Title {{ font-size: 22px; font-weight: 600; }}
 QLabel#Section {{ color: {t.faint}; font-size: 11px; font-weight: 600; }}
 
-/* home tab (Termius-style menu + pages) */
+/* home tab (menu + pages) */
 #NavBar {{ background: {t.sidebar}; border-right: 1px solid {t.sep}; }}
 QListWidget#Nav {{ background: transparent; border: none; }}
 QListWidget#Nav::item {{ padding: 8px 10px; margin: 1px 0; border-radius: 8px; color: {t.text}; }}

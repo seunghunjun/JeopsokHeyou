@@ -637,7 +637,7 @@ class MainWindow(QMainWindow):
         self.reload_sessions()
         self.tunnels = TunnelManager(self.store, self)
         self.snippets = library.SnippetStore()
-        # Home tab (Termius-style menu: Hosts, Keychain, Port Forwarding, …) — always the first tab
+        # Home tab (menu: Start page, Hosts, Keychain, Port Forwarding, …) — always the first tab
         self.home = HomeTab(self)
         self.tabs.insertTab(0, self.home, icons.line("home"), tr("Home"))
         self.tabs.tabBar().setTabButton(0, self.tabs.tabBar().ButtonPosition.RightSide, None)
