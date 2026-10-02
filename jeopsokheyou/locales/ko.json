@@ -274,6 +274,7 @@
   "pyyaml is not installed.\nReinstall with run.bat, or run: {cmd}": "pyyaml 이 설치되어 있지 않습니다.\nrun.bat 으로 다시 설치하거나: {cmd}",
   "Quick connect": "빠른 접속",
   "Quick connect — user@host:port": "빠른 접속 — user@host:port",
+  "Re-wrap long lines when the terminal width changes": "터미널 폭이 바뀌면 긴 줄을 다시 맞추기",
   "Recent sessions": "최근 세션",
   "Reconnect automatically when the connection drops": "연결이 끊기면 자동으로 다시 연결",
   "Reconnecting…": "다시 연결하는 중…",

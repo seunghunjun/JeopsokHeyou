@@ -51,6 +51,8 @@ class TermScreen(pyte.Screen):
 
     def __init__(self, columns: int, lines: int, scrollback: int = 5000):
         self.scrollback: deque = deque(maxlen=scrollback)
+        self.reflow = True           # re-wrap long lines when the width changes (Settings can turn it off)
+        self._drawing = False        # inside draw(): a line feed there is a soft wrap, not a real newline
         self.sb_total = 0            # total lines pushed into scrollback so far (basis for absolute row numbers)
         self.alt = None              # (saved main-screen buffer, cursor)
         self.responder: Callable[[str], None] | None = None
@@ -64,6 +66,24 @@ class TermScreen(pyte.Screen):
             self.scrollback.append(self.buffer[top])
             self.sb_total += 1
         super().index()
+
+    # --- soft wraps: remember which rows continue on the next row (needed to re-wrap on resize)
+    def draw(self, data: str) -> None:
+        self._drawing = True
+        try:
+            super().draw(data)
+        finally:
+            self._drawing = False
+
+    def linefeed(self) -> None:
+        if self._drawing:   # pyte wraps inside draw() with carriage_return() + linefeed()
+            self.buffer[self.cursor.y].wrapped = True
+        super().linefeed()
+
+    def erase_in_line(self, how: int = 0, private: bool = False) -> None:
+        super().erase_in_line(how, private)
+        if how in (0, 2):   # the end of the row was cleared: it no longer continues on the next row
+            self.buffer[self.cursor.y].wrapped = False
 
     def erase_in_display(self, how: int = 0, *args, **kwargs) -> None:
         super().erase_in_display(how, *args, **kwargs)
@@ -96,10 +116,107 @@ class TermScreen(pyte.Screen):
                 return
         super().reset_mode(*modes, **kwargs)
 
+    # --- reflow: when the width changes, join soft-wrapped rows and wrap them again at the new width
+    def _new_row(self, cells, wrapped: bool):
+        row = pyte.screens.StaticDefaultDict(self.default_char)
+        for x, c in enumerate(cells):
+            row[x] = c
+        row.wrapped = wrapped
+        return row
+
+    def _row_cells(self, row, width: int, keep_all: bool) -> list:
+        cells = [row[x] for x in range(width)]
+        if not keep_all:   # a real line end: drop the blank padding after the text
+            while cells and cells[-1].data in (" ", "") and cells[-1].bg == "default" and not cells[-1].reverse:
+                cells.pop()
+        return cells
+
+    def _reflow(self, columns: int) -> None:
+        old_cols = self.columns
+        last = self.cursor.y   # rows below the cursor only count when they hold text
+        for y in range(self.lines - 1, self.cursor.y, -1):
+            if y in self.buffer and any(c.data.strip() for c in self.buffer[y].values()):
+                last = y
+                break
+        rows = list(self.scrollback) + [self.buffer[y] for y in range(last + 1)]
+        cursor_row = len(self.scrollback) + self.cursor.y
+        # 1) logical lines (soft-wrapped rows joined) and the cursor's place in them
+        logical, cur, cursor_at = [], [], (0, 0)
+        for i, row in enumerate(rows):
+            wrapped = bool(getattr(row, "wrapped", False))
+            if i == cursor_row:
+                cursor_at = (len(logical), len(cur) + self.cursor.x)
+            cur.extend(self._row_cells(row, old_cols, keep_all=wrapped))   # the cursor's place is kept separately
+            if not wrapped:
+                logical.append(cur)
+                cur = []
+        if cur:
+            logical.append(cur)
+        # 2) wrap again at the new width (a double-width character is never split)
+        new_rows, cursor_pos = [], (0, 0)
+        for li, cells in enumerate(logical):
+            start = len(new_rows)
+            offsets = []   # cell index -> (row, x)
+            row, x = [], 0
+            i = 0
+            while i < len(cells):
+                c = cells[i]
+                wide = c.data != "" and i + 1 < len(cells) and cells[i + 1].data == ""
+                need = 2 if wide else 1
+                if x + need > columns:
+                    new_rows.append(self._new_row(row, True))
+                    row, x = [], 0
+                offsets.append((len(new_rows), x))
+                row.append(c)
+                x += 1
+                if wide:
+                    offsets.append((len(new_rows), x))
+                    row.append(cells[i + 1])
+                    x += 1
+                    i += 1
+                i += 1
+            new_rows.append(self._new_row(row, False))
+            if li == cursor_at[0]:
+                o = cursor_at[1]
+                if o < len(offsets):
+                    cursor_pos = offsets[o]
+                else:   # past the text (e.g. after the prompt's trailing space)
+                    extra = o - len(cells)
+                    r, cx = (offsets[-1][0], offsets[-1][1] + 1) if offsets else (start, 0)
+                    cx += extra
+                    while cx > columns:
+                        cx -= columns
+                        r += 1
+                    cursor_pos = (r, cx)
+        while cursor_pos[0] >= len(new_rows):
+            new_rows.append(self._new_row([], False))
+        # 3) the last screenful (keeping the cursor visible) becomes the screen, the rest scrollback
+        cy = cursor_pos[0]
+        top = max(0, len(new_rows) - self.lines)
+        top = min(top, cy)
+        top = max(top, cy - self.lines + 1)
+        discarded = self.sb_total - len(self.scrollback)
+        self.scrollback.clear()
+        self.scrollback.extend(new_rows[:top])
+        self.sb_total = discarded + top
+        self.buffer.clear()
+        for y, row in enumerate(new_rows[top:top + self.lines]):
+            self.buffer[y] = row
+        self.cursor.y = cy - top
+        self.cursor.x = min(cursor_pos[1], columns)
+        self.columns = columns
+        self.set_margins()
+        self.dirty.update(range(self.lines))
+
     # --- resize: trim below the cursor; lines pushed off the top go to scrollback
     def resize(self, lines=None, columns=None) -> None:
         lines = lines or self.lines
         columns = columns or self.columns
+        if columns != self.columns and self.reflow and self.alt is None:
+            try:
+                self._reflow(columns)
+            except Exception:
+                pass   # never lose the session over a layout problem — fall back to plain resizing
         if lines < self.lines:
             drop = max(0, self.cursor.y + 1 - lines)
             old = self.lines

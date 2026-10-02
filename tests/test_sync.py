@@ -94,12 +94,15 @@ tab.split_pane(Qt.Orientation.Horizontal); p1 = tab.panes[1]
 wait(lambda: p1._inject_state == "done" and p1.at_prompt, 15)
 check("new split pane starts at home", p1.cwd == "/home/tester", p1.cwd)
 wait(lambda: False, 0.5)
-# Lines may only be cut at the pane's final width (no reflow) — never at a narrower,
-# transient width that existed for a moment while the splitter was being laid out.
-cols = p0.screen.columns
-expected = [l[:cols].rstrip() for l in before_split if l[:cols].strip()]
-check("existing screen content kept after split (up to the final width)", screen(p0)[-len(expected):] == expected,
-      (cols, screen(p0)[-4:], expected[-4:]))
+# Nothing may be lost while the splitter is laid out: long lines are re-wrapped (reflow), not cut.
+def all_text(p):
+    s = p.screen
+    rows = list(s.scrollback) + [s.buffer[y] for y in range(s.lines)]
+    return "".join("".join(r[x].data for x in range(s.columns)) for r in rows)
+squash = lambda t: "".join(t.split())
+expected = squash("".join(l for l in before_split if l.strip()))
+check("existing screen content kept after split (re-wrapped, nothing lost)", expected in squash(all_text(p0)),
+      (p0.screen.columns, screen(p0)[-4:]))
 p0.setFocus(); tab._pane_focused(p0)
 check("select pane 1 -> explorer at logs", wait(lambda: ex.cwd == "/home/tester/logs"), ex.cwd)
 tab._pane_focused(p1)

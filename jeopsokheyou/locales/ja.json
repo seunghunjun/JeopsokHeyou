@@ -274,6 +274,7 @@
   "pyyaml is not installed.\nReinstall with run.bat, or run: {cmd}": "pyyaml がインストールされていません。\nrun.bat で再インストールするか、次を実行してください: {cmd}",
   "Quick connect": "クイック接続",
   "Quick connect — user@host:port": "クイック接続 — user@host:port",
+  "Re-wrap long lines when the terminal width changes": "ターミナルの幅が変わったら長い行を折り返し直す",
   "Recent sessions": "最近のセッション",
   "Reconnect automatically when the connection drops": "接続が切れたら自動で再接続する",
   "Reconnecting…": "再接続中…",

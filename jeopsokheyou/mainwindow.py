@@ -44,6 +44,7 @@ class TerminalPane(TerminalWidget):
 
     def __init__(self, font, settings, session: Session, parent=None):
         super().__init__(font, settings.get("scrollback", 5000), session.encoding, parent)
+        self.screen.reflow = bool(settings.get("terminal_reflow", True))
         self.session = session
         self.chan = None
         self.reader = None
@@ -874,6 +875,11 @@ class MainWindow(QMainWindow):
         if d.exec():
             v = d.values()
             self.settings["idle_minutes"] = v["idle_minutes"]
+            self.settings["terminal_reflow"] = v["terminal_reflow"]
+            for i in range(self.tabs.count()):
+                tab = self.tabs.widget(i)
+                for p in getattr(tab, "panes", []):
+                    p.screen.reflow = v["terminal_reflow"]
             if v["language"] != self.settings.get("language", "system"):
                 self.settings["language"] = v["language"]
                 config.save_settings(self.settings)

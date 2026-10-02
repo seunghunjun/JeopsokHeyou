@@ -218,6 +218,9 @@ class SettingsDialog(QDialog):
                                 "(warns 1 minute before).\n"
                                 "Each session can override this in Edit Session."))
         form.addRow(tr("Auto disconnect"), self.idle)
+        self.reflow = QCheckBox(tr("Re-wrap long lines when the terminal width changes"))
+        self.reflow.setChecked(bool(settings.get("terminal_reflow", True)))
+        form.addRow("", self.reflow)
         if parent is not None and hasattr(parent, "open_vault_settings"):
             mp = QPushButton(tr("Master password…"))
             mp.clicked.connect(parent.open_vault_settings)
@@ -252,4 +255,5 @@ class SettingsDialog(QDialog):
             "term_size": self.term_size.value(),
             "idle_minutes": int(self.idle.currentData()),
             "language": self.language.currentData(),
+            "terminal_reflow": self.reflow.isChecked(),
         }
