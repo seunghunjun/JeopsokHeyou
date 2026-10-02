@@ -48,6 +48,8 @@ class TerminalPane(TerminalWidget):
         scheme = (settings.get("color_schemes") or {}).get(settings.get("terminal_scheme", ""))
         if scheme:
             self.apply_scheme(scheme)
+        self.settings = settings
+        self.apply_highlights(settings)
         self.session = session
         self.chan = None
         self.reader = None
@@ -93,6 +95,42 @@ class TerminalPane(TerminalWidget):
         if self.session.follow_cwd:
             self._inject_state = "waiting"
             self._settle.start(3000)  # Inject after 3 s even if there is no output
+        if self.settings.get("log_sessions") and self.logger is None:
+            self.start_log()
+
+    # ------------------------------------------------------------ keyword highlighting / session log
+    def apply_highlights(self, settings) -> None:
+        from .highlights import DEFAULT_RULES, compile_rules
+        on = settings.get("highlight_enabled", True)
+        self.highlight_rules = compile_rules(settings.get("highlight_rules", DEFAULT_RULES)) if on else []
+        self.update()
+
+    def start_log(self) -> str:
+        from . import sessionlog
+        if self.logger is not None:
+            return str(self.logger.path)
+        base = self.settings.get("log_dir") or str(sessionlog.default_dir())
+        n = 1
+        tab = self.parent()
+        while tab is not None and not hasattr(tab, "panes"):
+            tab = tab.parent()
+        if tab is not None and self in tab.panes:
+            n = tab.panes.index(self) + 1
+        try:
+            self.logger = sessionlog.SessionLog(sessionlog.log_path(base, self.session.title(), n),
+                                                bool(self.settings.get("log_timestamps", True)))
+        except OSError as e:
+            self.write_local("\x1b[33m" + tr("Cannot write the session log: {error}", error=e) + "\x1b[0m\r\n")
+            return ""
+        self.write_local("\x1b[90m" + tr("Logging to {path}", path=self.logger.path) + "\x1b[0m\r\n")
+        return str(self.logger.path)
+
+    def stop_log(self) -> None:
+        if self.logger is not None:
+            path = self.logger.path
+            self.logger.close()
+            self.logger = None
+            self.write_local("\x1b[90m" + tr("Logging stopped ({path})", path=path) + "\x1b[0m\r\n")
 
     def _resize_pty(self, cols, rows):
         if self.chan and not self.chan.closed:
@@ -191,6 +229,9 @@ class TerminalPane(TerminalWidget):
         self.closed.emit(self)
 
     def close_channel(self):
+        if self.logger is not None:
+            self.logger.close()
+            self.logger = None
         if self.chan:
             try:
                 self.chan.close()
@@ -784,6 +825,8 @@ class MainWindow(QMainWindow):
         self._act(m, tr("Snippets…"), self.pick_snippet, "Ctrl+Shift+P")
         # Find: ⌘F on macOS (like iTerm2); Ctrl+Shift+G elsewhere (Ctrl+F belongs to the shell, Ctrl+Shift+F is port forwarding)
         self._act(m, tr("Find…"), self.find_in_terminal, "Ctrl+F" if paths.IS_MAC else "Ctrl+Shift+G")
+        self._act(m, tr("Start/stop logging this pane"), self.toggle_log)
+        self._act(m, tr("Open log folder"), self.open_log_folder)
         m.addSeparator()
         self._act(m, tr("Copy  (Ctrl+Shift+C / drag)"), lambda: None)
         self._act(m, tr("Paste  (Ctrl+Shift+V / right-click)"), lambda: None)
@@ -883,12 +926,15 @@ class MainWindow(QMainWindow):
             self.settings["idle_minutes"] = v["idle_minutes"]
             self.settings["terminal_reflow"] = v["terminal_reflow"]
             self.settings["terminal_scheme"] = v["terminal_scheme"]
+            for key in ("log_sessions", "log_timestamps", "log_dir", "highlight_enabled", "highlight_rules"):
+                self.settings[key] = v[key]
             scheme = (self.settings.get("color_schemes") or {}).get(v["terminal_scheme"])
             for i in range(self.tabs.count()):
                 tab = self.tabs.widget(i)
                 for p in getattr(tab, "panes", []):
                     p.screen.reflow = v["terminal_reflow"]
                     p.apply_scheme(scheme)
+                    p.apply_highlights(self.settings)
             if v["language"] != self.settings.get("language", "system"):
                 self.settings["language"] = v["language"]
                 config.save_settings(self.settings)
@@ -1397,6 +1443,25 @@ class MainWindow(QMainWindow):
         self.tabs.setCurrentWidget(tab)
         pane.send_text(snip.text_to_send())
         pane.setFocus()
+
+    def toggle_log(self):
+        tab = self.current_tab()
+        pane = (tab.active or tab.panes[0]) if tab and tab.panes else None
+        if pane is None:
+            QMessageBox.information(self, tr("Session log"), tr("Open a connected terminal first."))
+            return
+        if pane.logger is not None:
+            pane.stop_log()
+        else:
+            pane.start_log()
+
+    def open_log_folder(self):
+        from . import sessionlog
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        d = Path(self.settings.get("log_dir") or sessionlog.default_dir())
+        d.mkdir(parents=True, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(d)))
 
     def find_in_terminal(self):
         tab = self.current_tab()

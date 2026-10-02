@@ -313,6 +313,9 @@ class TerminalWidget(QWidget):
         self.search_hits: list[tuple[int, int, int]] = []   # (abs_row, first_col, last_col)
         self.search_index = -1
         self._search_bar = None
+        # keyword highlighting (highlights.compile_rules) and session log (sessionlog.SessionLog)
+        self.highlight_rules: list = []
+        self.logger = None
 
         self.sbar = QScrollBar(Qt.Orientation.Vertical, self)
         self.sbar.valueChanged.connect(self._on_scrollbar)
@@ -358,6 +361,11 @@ class TerminalWidget(QWidget):
         self._osc_pending = ""
         if not text:
             return
+        if self.logger is not None:
+            try:
+                self.logger.write(text)
+            except OSError:
+                self.logger = None    # disk full / folder removed: stop logging, keep the session
         # an incomplete OSC 7 at the end of a chunk is joined with the next chunk
         tail = text.rfind("\x1b]7;")
         if tail >= 0 and OSC7_RE.match(text, tail) is None and len(text) - tail < 4096:
@@ -556,6 +564,10 @@ class TerminalWidget(QWidget):
                 row_sel = (c0, c1)
             if not line and row_sel is None:
                 continue
+            hl = {}
+            if self.highlight_rules and s.alt is None:
+                from .highlights import row_colors
+                hl = row_colors(line, s.columns, self.highlight_rules)
             xmax = s.columns if row_sel else min(s.columns, (max(line.keys()) + 1) if line else 0)
             y = vy * ch
             # 1) background
@@ -583,9 +595,11 @@ class TerminalWidget(QWidget):
                     d = c.data
                     if c.reverse:
                         fgc = self.bg_default if c.bg == "default" else self._color(c.bg, False)
+                    elif x in hl and c.fg == "default":
+                        fgc = hl[x]        # keyword highlight (only text the program did not color itself)
                     else:
                         fgc = self._color(c.fg, True, c.bold)
-                    key = (fgc.rgb(), c.bold, c.underscore, c.italics)
+                    key = (fgc.rgb(), c.bold or x in hl, c.underscore, c.italics)
                 else:
                     d, key = "", None
                 ascii_ok = len(d) == 1 and " " <= d < "\x7f"

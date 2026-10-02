@@ -233,6 +233,30 @@ class SettingsDialog(QDialog):
         self.reflow = QCheckBox(tr("Re-wrap long lines when the terminal width changes"))
         self.reflow.setChecked(bool(settings.get("terminal_reflow", True)))
         form.addRow("", self.reflow)
+        # keyword highlighting
+        from .highlights import DEFAULT_RULES
+        self._hl_enabled = bool(settings.get("highlight_enabled", True))
+        self._hl_rules = [dict(r) for r in settings.get("highlight_rules", DEFAULT_RULES)]
+        hl_btn = QPushButton(tr("Keyword highlighting…"))
+        hl_btn.clicked.connect(self._edit_highlights)
+        form.addRow(tr("Highlighting"), hl_btn)
+        # session log
+        from . import sessionlog
+        self.log_all = QCheckBox(tr("Log every session to a file"))
+        self.log_all.setChecked(bool(settings.get("log_sessions", False)))
+        self.log_stamp = QCheckBox(tr("Add the time to every logged line"))
+        self.log_stamp.setChecked(bool(settings.get("log_timestamps", True)))
+        self.log_dir = QLineEdit(settings.get("log_dir") or str(sessionlog.default_dir()))
+        pick = QPushButton(tr("Browse…"))
+        pick.clicked.connect(self._pick_log_dir)
+        log_row = QWidget()
+        lr = QHBoxLayout(log_row)
+        lr.setContentsMargins(0, 0, 0, 0)
+        lr.addWidget(self.log_dir, 1)
+        lr.addWidget(pick)
+        form.addRow(tr("Session log"), self.log_all)
+        form.addRow("", self.log_stamp)
+        form.addRow(tr("Log folder"), log_row)
         if parent is not None and hasattr(parent, "open_vault_settings"):
             mp = QPushButton(tr("Master password…"))
             mp.clicked.connect(parent.open_vault_settings)
@@ -251,6 +275,18 @@ class SettingsDialog(QDialog):
         bb.accepted.connect(self.accept)
         bb.rejected.connect(self.reject)
         form.addRow(bb)
+
+    def _edit_highlights(self):
+        from .highlights import HighlightDialog
+        d = HighlightDialog(self._hl_enabled, self._hl_rules, self)
+        if d.exec():
+            self._hl_enabled = d.enabled.isChecked()
+            self._hl_rules = d.rules()
+
+    def _pick_log_dir(self):
+        d = QFileDialog.getExistingDirectory(self, tr("Log folder"), self.log_dir.text())
+        if d:
+            self.log_dir.setText(d)
 
     def _fill_schemes(self, current: str):
         self.scheme.clear()
@@ -289,4 +325,9 @@ class SettingsDialog(QDialog):
             "language": self.language.currentData(),
             "terminal_reflow": self.reflow.isChecked(),
             "terminal_scheme": self.scheme.currentData() or "",
+            "highlight_enabled": self._hl_enabled,
+            "highlight_rules": self._hl_rules,
+            "log_sessions": self.log_all.isChecked(),
+            "log_timestamps": self.log_stamp.isChecked(),
+            "log_dir": self.log_dir.text().strip(),
         }
