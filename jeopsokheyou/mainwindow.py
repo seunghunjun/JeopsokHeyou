@@ -20,7 +20,7 @@ from .explorer import SftpExplorer, cleanup_temp, sh_quote
 from .i18n import tr
 from .ssh import ConnectWorker, ShellReader, SshConnection
 from .terminal import TerminalWidget, pick_font
-from . import __version__, forwarding, library, sshconfig, vault, vaultui
+from . import __version__, diskui, diskusage, forwarding, library, sshconfig, vault, vaultui
 from .home import HomeTab, SnippetPicker
 from .tunnels import (TunnelManager, ask_trust_host, error_text, import_mobaxterm_tunnels,
                       jump_credentials)
@@ -286,6 +286,28 @@ class SessionTab(QWidget):
         bl.addWidget(keep)
         self.idle_banner.hide()
         lay.addWidget(self.idle_banner)
+        # Low disk space banner (only when a disk is below the user's warning level)
+        self.disk_banner = QFrame()
+        self.disk_banner.setObjectName("DiskBanner")
+        self.disk_banner.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum)
+        dl = QHBoxLayout(self.disk_banner)
+        dl.setContentsMargins(14, 5, 6, 5)
+        self.disk_label = QLabel()
+        self.disk_label.setObjectName("DiskBannerText")
+        disk_more = QPushButton(tr("Details"))
+        disk_more.setObjectName("DiskBannerButton")
+        disk_more.clicked.connect(lambda: self.explorer.show_disk_card())
+        disk_close = QToolButton()
+        disk_close.setAutoRaise(True)
+        disk_close.setToolTip(tr("Hide until the next connection"))
+        icons.bind(disk_close, "close")
+        disk_close.clicked.connect(self._dismiss_disk_banner)
+        dl.addWidget(self.disk_label, 1)
+        dl.addWidget(disk_more)
+        dl.addWidget(disk_close)
+        self.disk_banner.hide()
+        self._disk_dismissed = False
+        lay.addWidget(self.disk_banner)
         self.idle_timer = QTimer(self)
         self.idle_timer.setInterval(1000)
         self.idle_timer.timeout.connect(self._check_idle)
@@ -295,12 +317,18 @@ class SessionTab(QWidget):
         self.explorer.follow_chk.setChecked(session.follow_cwd)
         self.explorer.cd_requested.connect(self._cd)
         self.explorer.navigated.connect(self._sync_terminal)
+        self.explorer.disk_name = session.name
+        self.explorer.disk_updated.connect(lambda _s: self.update_disk_banner())
         self.term_split = QSplitter(Qt.Orientation.Horizontal)
         self.split.addWidget(self.explorer)
         self.split.addWidget(self.term_split)
         self.split.setStretchFactor(0, 0)
         self.split.setStretchFactor(1, 1)
         self.split.setSizes([440, 820])
+        # Dragging the divider stops at each side's minimum width instead of folding a pane away
+        # (the explorer is hidden with View > Show/hide SFTP explorer, Ctrl+Shift+B).
+        self.split.setCollapsible(0, False)
+        self.split.setCollapsible(1, False)
         lay.addWidget(self.split)
         self._add_pane()
 
@@ -432,6 +460,38 @@ class SessionTab(QWidget):
         if self.conn:
             self.conn.close()
 
+    # ------------------------------------------------------------ low disk space banner
+    def update_disk_banner(self):
+        s = self.explorer.disk_summary
+        settings = self.main.settings
+        worst = s.worst() if s is not None else None
+        if (worst is None or self._disk_dismissed or not settings.get("disk_show", True)
+                or not settings.get("disk_banner", True)):
+            self.disk_banner.hide()
+            return
+        warn, crit = diskui.thresholds(settings)
+        lv = diskusage.level(worst.free_pct, warn, crit)
+        if lv == "ok":
+            self.disk_banner.hide()
+            return
+        low = [d for d in s.measured if diskusage.level(d.free_pct, warn, crit) != "ok"]
+        text = tr("Low disk space · {mount} has {pct} free ({free})", mount=worst.mount,
+                  pct=diskui.pct_text(worst.free_pct), free=diskui.size_text(worst.avail))
+        if len(low) > 1:
+            text += "  " + tr("(+{n} more)", n=len(low) - 1)
+        self.disk_label.setText(text)
+        self.disk_banner.setProperty("level", lv)
+        self.disk_banner.style().unpolish(self.disk_banner)
+        self.disk_banner.style().polish(self.disk_banner)
+        for w in self.disk_banner.findChildren(QWidget):
+            w.style().unpolish(w)
+            w.style().polish(w)
+        self.disk_banner.show()
+
+    def _dismiss_disk_banner(self):
+        self._disk_dismissed = True
+        self.disk_banner.hide()
+
     def _cd(self, path: str):
         if self.active and not self.active.disconnected:
             self.active.send_text(f" cd -- {sh_quote(path)}\r")
@@ -532,6 +592,7 @@ class SessionTab(QWidget):
             self._on_failed(tr("Failed to open shell: {error}", error=e))
             return
         pane.setFocus()
+        self._disk_dismissed = False
         self.explorer.attach(self.conn, self.session.init_dir)
         self._start_forwards()
         try:
@@ -927,8 +988,17 @@ class MainWindow(QMainWindow):
             self.settings["idle_minutes"] = v["idle_minutes"]
             self.settings["terminal_reflow"] = v["terminal_reflow"]
             self.settings["terminal_scheme"] = v["terminal_scheme"]
-            for key in ("log_sessions", "log_timestamps", "log_dir", "highlight_enabled", "highlight_rules"):
+            for key in ("log_sessions", "log_timestamps", "log_dir", "highlight_enabled", "highlight_rules",
+                        "disk_show", "disk_banner", "disk_card", "disk_warn_pct", "disk_crit_pct"):
                 self.settings[key] = v[key]
+            for i in range(self.tabs.count()):
+                tab = self.tabs.widget(i)
+                if isinstance(tab, SessionTab):
+                    if v["disk_show"] and tab.explorer.disk_summary is None:
+                        tab.explorer.refresh_disk()
+                    tab.explorer.apply_disk_settings()
+                    tab.update_disk_banner()
+            self.home.refresh_current()
             scheme = (self.settings.get("color_schemes") or {}).get(v["terminal_scheme"])
             for i in range(self.tabs.count()):
                 tab = self.tabs.widget(i)

@@ -48,6 +48,7 @@ No account required. Free and open source (GPL-3.0).
 - **🔎 Find in the terminal** — search the screen and scrollback with highlighted matches (⌘F on macOS, Ctrl+Shift+G elsewhere).
 - **🖍️ Keyword highlighting** — ERROR in red, WARN in yellow, SUCCESS in green, or your own words and colors.
 - **📝 Session logs** — save what a terminal shows as plain text, with time stamps, for one pane or every session.
+- **💽 Server disk space** — free space of the server's disks next to the file explorer, a card with every disk, a banner when a disk runs low (warning and critical levels are yours to set) and the last value on each host card. Read from numbers the server already keeps — no command, no scan, network shares skipped.
 - **📥 One-click import** — sessions from **PuTTY**, **Tabby**, **MobaXterm** (including MobaSSHTunnel tunnels), **SecureCRT** (folders, port forwards, jump hosts), **iTerm2** profiles and color schemes, and **OpenSSH config** (`~/.ssh/config`) files.
 - **⏱️ Idle auto-disconnect** — per session or global, with a one-minute warning; never disconnects during a transfer.
 - **🛡️ Safe by default** — host-key verification (trust on first use, block on mismatch) with a Known Hosts screen, passwords not saved unless you ask, private keys referenced by path only.
@@ -162,12 +163,13 @@ no account, no analytics, no auto-update service.
 
 | Topic | How it works |
 | --- | --- |
-| **Where data lives** | Windows `%APPDATA%\JeopsokHeyou\`, macOS `~/Library/Application Support/JeopsokHeyou/` — `sessions.json`, `tunnels.json`, `snippets.json`, `history.json`, `known_hosts`, `settings.json` (and `vault.json` when a master password is set). Nothing is written next to the program. |
+| **Where data lives** | Windows `%APPDATA%\JeopsokHeyou\`, macOS `~/Library/Application Support/JeopsokHeyou/` — `sessions.json`, `tunnels.json`, `snippets.json`, `history.json`, `known_hosts`, `settings.json`, `disk_cache.json` (and `vault.json` when a master password is set). Nothing is written next to the program. |
 | **Passwords** | Not saved unless you tick *Save password*. By default: Windows DPAPI (bound to your Windows account) or your macOS login Keychain. With the optional master password: AES-256-GCM with a random data key, wrapped by scrypt-derived keys from the master password and from a one-time recovery key. Only secrets are locked — the session list stays readable. |
 | **Master password lost** | Unlock with the recovery key. If both are lost, *Reset* deletes only the saved secrets; sessions, groups and settings stay. There is no back door. |
 | **Private keys** | Only the key **path** is stored. OpenSSH format (convert PuTTY `.ppk` with PuTTYgen). SSH agent (Pageant/OpenSSH) is used for key sessions. Keys generated in the Keychain screen are written to `~/.ssh` and never overwrite an existing file. |
 | **Host keys** | Trust on first use with the SHA256 fingerprint shown; a changed key **blocks** the connection. Trusted keys can be reviewed and removed in *Known Hosts*. |
 | **Port forwarding** | Listens on `127.0.0.1` unless you choose another address. Imported MobaXterm tunnels that listened on all interfaces are switched to this PC only. |
+| **Disk space** | Asked once when you connect (and when you press *Check again*), over the explorer's existing SFTP channel: the mount list is read from `/proc/self/mounts` and each local disk is asked with the `statvfs@openssh.com` extension. No shell command, no extra process, no folder scan; NFS/SMB/sshfs shares are never asked. Servers without the extension simply show nothing. The last values are kept in `disk_cache.json` on this PC only. |
 | **Remote file names** | Names containing `\`, `:`, `..` or Windows device names are sanitised so a malicious server cannot write outside the chosen folder. |
 | **Temporary copies** | Files opened for editing are copied to the system temp folder (`JeopsokHeyou/`) and cleaned up after 3 days. |
 

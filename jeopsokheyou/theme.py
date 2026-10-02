@@ -259,6 +259,12 @@ QDockWidget::title {{ background: {t.sidebar}; padding: 8px 12px 2px 12px; }}
 QLabel#Muted {{ color: {t.muted}; }}
 #IdleBanner {{ background: {"#3A3320" if t.dark else "#FFF4D6"}; border-bottom: 1px solid {"#5C4F26" if t.dark else "#F0D98C"}; }}
 #IdleBanner QLabel {{ color: {"#F5D78E" if t.dark else "#6B4E00"}; }}
+#DiskBanner[level="warn"] {{ background: {"#3A3320" if t.dark else "#FFF4D6"}; border-bottom: 1px solid {"#5C4F26" if t.dark else "#F0D98C"}; }}
+#DiskBanner[level="warn"] QLabel {{ color: {"#F5D78E" if t.dark else "#6B4E00"}; font-weight: 600; }}
+#DiskBanner[level="crit"] {{ background: {"#3D2225" if t.dark else "#FFE9E8"}; border-bottom: 1px solid {"#6B2E33" if t.dark else "#F5B8B4"}; }}
+#DiskBanner[level="crit"] QLabel {{ color: {"#FF9C94" if t.dark else "#9B1C14"}; font-weight: 600; }}
+#DiskBanner QPushButton {{ padding: 2px 12px; }}
+QLabel#DiskCardTitle {{ font-size: 15px; font-weight: 600; }}
 QLabel#Title {{ font-size: 22px; font-weight: 600; }}
 QLabel#Section {{ color: {t.faint}; font-size: 11px; font-weight: 600; }}
 

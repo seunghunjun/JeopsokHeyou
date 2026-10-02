@@ -186,6 +186,12 @@ class Card(QFrame):
             self.edit_btn.setVisible(False)
             lay.addWidget(self.edit_btn)
         self.setToolTip(f"{title}\n{subtitle}")
+        self._lay = lay
+
+    def add_badge(self, w: QWidget) -> None:
+        """Extra widget at the right end of the card (before the edit button)."""
+        idx = self._lay.indexOf(self.edit_btn) if self.edit_btn is not None else self._lay.count()
+        self._lay.insertWidget(idx, w)
 
     def enterEvent(self, e):
         if self.edit_btn:
@@ -585,6 +591,11 @@ class HostsPage(QWidget):
         self.groups_label.setVisible(bool(groups))
         self.groups_box.setVisible(bool(groups))
         sessions = self._visible_sessions()
+        settings = self.main.settings
+        last_disk = {}
+        if settings.get("disk_card", True) and settings.get("disk_show", True):
+            from . import diskusage
+            last_disk = diskusage.load_last()
         for s in sessions:
             sub = f"{s.user + '@' if s.user else ''}{s.host}" + (f":{s.port}" if int(s.port or 22) != 22 else "")
             if s.group and (q or not self.group):
@@ -594,6 +605,8 @@ class HostsPage(QWidget):
             c.clicked.connect(lambda s=s: self._host_clicked(s))
             c.edit_requested.connect(lambda s=s: self.edit(s))
             c.menu_requested.connect(lambda pos, s=s: self._host_menu(s, pos))
+            if s.id in last_disk:
+                c.add_badge(self._disk_badge(last_disk[s.id]))
             self.hosts_flow.addWidget(c)
             self.cards[s.id] = c
             c.set_selected(s.id == (self.editing_id or self.selected_id))
@@ -608,6 +621,11 @@ class HostsPage(QWidget):
         else:
             self.empty.setText("")
         self.empty.setVisible(bool(self.empty.text()))
+
+    def _disk_badge(self, entry: dict):
+        from . import diskui
+        warn, crit = diskui.thresholds(self.main.settings)
+        return diskui.DiskBadge(entry, warn, crit)
 
     def _build_crumbs(self):
         while self.crumb_lay.count():

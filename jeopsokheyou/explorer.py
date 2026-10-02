@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QHBoxLayout, QSta
                                QMessageBox, QProgressBar, QStyle, QStyledItemDelegate, QToolButton, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from . import dragout, icons, paths, winopen
+from . import diskusage, diskui, dragout, icons, paths, winopen
 from .i18n import tr
 from .safenames import UnsafeName, local_name, safe_join
 from .ssh import SshConnection
@@ -435,6 +435,7 @@ class SftpExplorer(QWidget):
     cd_requested = Signal(str)
     navigated = Signal(str)   # user changed folders in the explorer directly (for terminal sync)
     status = Signal(str)
+    disk_updated = Signal(object)   # diskusage.Summary or None (server disk space, read once per connection)
 
     def __init__(self, session_id: str, settings: dict, parent=None):
         super().__init__(parent)
@@ -457,6 +458,10 @@ class SftpExplorer(QWidget):
         self._asking: set[str] = set()        # files with an upload confirmation dialog open
         self._change_timers: dict[str, QTimer] = {}
         self._locators: list = []
+        self.disk_summary = None
+        self.disk_time = 0.0
+        self.disk_name = ""
+        self._disk_card = None
         self._build()
 
     # ------------------------------------------------------------ layout
@@ -558,6 +563,9 @@ class SftpExplorer(QWidget):
         fl.addWidget(self.info, 1)
         fl.addWidget(self.bar)
         fl.addWidget(self.cancel_btn)
+        self.disk_pill = diskui.DiskPill()
+        self.disk_pill.clicked.connect(self.show_disk_card)
+        fl.addWidget(self.disk_pill)
         lay.addWidget(foot)
 
     def _fit_name_column(self):
@@ -638,6 +646,40 @@ class SftpExplorer(QWidget):
                 w.stop()
                 w.wait(2000)
         self.browse = self.transfer = None
+        if self.disk_summary is not None:
+            self.disk_summary = None
+            self.apply_disk_settings()
+            self.disk_updated.emit(None)
+        if self._disk_card is not None:
+            self._disk_card.hide()
+
+    # ------------------------------------------------------------ server disk space
+    def disk_enabled(self) -> bool:
+        return bool(self.settings.get("disk_show", True))
+
+    def refresh_disk(self) -> None:
+        """Ask the server once (statvfs on the explorer's own SFTP channel; never a scan or a command)."""
+        if self.browse and self.disk_enabled():
+            home = self.home
+            self.browse.submit("disk", job_simple(lambda s: diskusage.query(s, home)))
+
+    def apply_disk_settings(self) -> None:
+        warn, crit = diskui.thresholds(self.settings)
+        show = self.disk_enabled() and self.disk_summary is not None
+        self.disk_pill.set_summary(self.disk_summary if show else None, warn, crit)
+        self.disk_pill.setVisible(show)
+        if not show and self._disk_card is not None:
+            self._disk_card.hide()
+
+    def show_disk_card(self) -> None:
+        if self.disk_summary is None:
+            return
+        if self._disk_card is None:
+            self._disk_card = diskui.DiskCard(self)
+            self._disk_card.refresh_requested.connect(self.refresh_disk)
+        warn, crit = diskui.thresholds(self.settings)
+        self._disk_card.fill(self.disk_name, self.disk_summary, warn, crit, self.disk_time)
+        self._disk_card.show_at(self.disk_pill)
 
     # ------------------------------------------------------------ navigation
     def navigate(self, path: str, push: bool = True, origin: str = "user") -> None:
@@ -688,6 +730,23 @@ class SftpExplorer(QWidget):
     def _on_result(self, tag: str, payload):
         if tag == "home":
             self.home = payload
+            self.refresh_disk()
+        elif tag == "disk":
+            self.disk_summary = payload
+            self.disk_time = time.time()
+            if payload is not None:
+                try:
+                    diskusage.save_last(self.session_id, payload)
+                except OSError:
+                    pass
+            self.apply_disk_settings()
+            if self._disk_card is not None and self._disk_card.isVisible():
+                if payload is None:
+                    self._disk_card.hide()
+                else:
+                    warn, crit = diskui.thresholds(self.settings)
+                    self._disk_card.fill(self.disk_name, payload, warn, crit, self.disk_time)
+            self.disk_updated.emit(payload)
         elif tag == "list":
             path, entries, origin = payload
             self._fill(path, entries)
@@ -724,6 +783,8 @@ class SftpExplorer(QWidget):
                 self.open_remote(path)
 
     def _on_error(self, tag: str, msg: str):
+        if tag == "disk":
+            return   # disk space is a nice-to-have: never report it as an error
         if tag in ("upload", "download", "open", "open_with", "reupload"):
             self._done("")
         if tag in ("open", "open_with"):

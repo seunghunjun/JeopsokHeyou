@@ -257,6 +257,46 @@ class SettingsDialog(QDialog):
         form.addRow(tr("Session log"), self.log_all)
         form.addRow("", self.log_stamp)
         form.addRow(tr("Log folder"), log_row)
+        # server disk space (read from numbers the server already keeps; nothing is scanned)
+        self.disk_show = QCheckBox(tr("Show server disk space in the file explorer"))
+        self.disk_show.setChecked(bool(settings.get("disk_show", True)))
+        self.disk_banner = QCheckBox(tr("Warn at the top of the session when space is low"))
+        self.disk_banner.setChecked(bool(settings.get("disk_banner", True)))
+        self.disk_card = QCheckBox(tr("Show the last checked value on host cards"))
+        self.disk_card.setChecked(bool(settings.get("disk_card", True)))
+        self.disk_card.setToolTip(tr("Kept on this PC from your last connection; the server is not asked again."))
+        self.disk_warn = QSpinBox()
+        self.disk_warn.setRange(1, 50)
+        self.disk_warn.setSuffix(" %")
+        self.disk_crit = QSpinBox()
+        self.disk_crit.setRange(0, 50)
+        self.disk_crit.setSuffix(" %")
+        from .diskui import thresholds
+        warn, crit = thresholds(settings)
+        self.disk_warn.setValue(max(1, int(round(warn))))
+        self.disk_crit.setValue(int(round(crit)))
+        self.disk_warn.valueChanged.connect(lambda w: self.disk_crit.setMaximum(w))
+        self.disk_crit.setMaximum(self.disk_warn.value())
+        level_row = QWidget()
+        lv = QHBoxLayout(level_row)
+        lv.setContentsMargins(0, 0, 0, 0)
+        lv.addWidget(QLabel(tr("Warning below")))
+        lv.addWidget(self.disk_warn)
+        lv.addSpacing(10)
+        lv.addWidget(QLabel(tr("Critical below")))
+        lv.addWidget(self.disk_crit)
+        lv.addStretch(1)
+        level_row.setToolTip(tr("Free space left on a disk. Orange below the warning level, red below the critical level."))
+        self.disk_show.toggled.connect(level_row.setEnabled)
+        self.disk_show.toggled.connect(self.disk_banner.setEnabled)
+        self.disk_show.toggled.connect(self.disk_card.setEnabled)
+        level_row.setEnabled(self.disk_show.isChecked())
+        self.disk_banner.setEnabled(self.disk_show.isChecked())
+        self.disk_card.setEnabled(self.disk_show.isChecked())
+        form.addRow(tr("Disk space"), self.disk_show)
+        form.addRow("", level_row)
+        form.addRow("", self.disk_banner)
+        form.addRow("", self.disk_card)
         if parent is not None and hasattr(parent, "open_vault_settings"):
             mp = QPushButton(tr("Master password…"))
             mp.clicked.connect(parent.open_vault_settings)
@@ -327,6 +367,11 @@ class SettingsDialog(QDialog):
             "terminal_scheme": self.scheme.currentData() or "",
             "highlight_enabled": self._hl_enabled,
             "highlight_rules": self._hl_rules,
+            "disk_show": self.disk_show.isChecked(),
+            "disk_banner": self.disk_banner.isChecked(),
+            "disk_card": self.disk_card.isChecked(),
+            "disk_warn_pct": self.disk_warn.value(),
+            "disk_crit_pct": min(self.disk_crit.value(), self.disk_warn.value()),
             "log_sessions": self.log_all.isChecked(),
             "log_timestamps": self.log_stamp.isChecked(),
             "log_dir": self.log_dir.text().strip(),

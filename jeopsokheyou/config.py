@@ -339,6 +339,11 @@ class SessionStore:
             if s.jump == sid:
                 s.jump = ""
         self.save()
+        try:
+            from . import diskusage
+            diskusage.forget_last([sid])     # last disk numbers shown on the host card
+        except Exception:
+            pass
 
     def get(self, sid: str) -> Session | None:
         return next((s for s in self.sessions if s.id == sid), None)
