@@ -811,6 +811,7 @@ class MainWindow(QMainWindow):
         self._act(m, tr("Import MobaXterm sessions…"), self.import_mobaxterm)
         self._act(m, tr("Import OpenSSH config…"), self.import_ssh_config)
         self._act(m, tr("Import iTerm2 profiles…"), self.import_iterm)
+        self._act(m, tr("Import SecureCRT sessions…"), self.import_securecrt)
         m.addSeparator()
         self._act(m, tr("Lock saved passwords"), self.lock_vault, "Ctrl+Shift+L")
         self._act(m, tr("Exit"), self.close)
@@ -1117,6 +1118,7 @@ class MainWindow(QMainWindow):
         m.addAction(tr("Import MobaXterm sessions…"), self.import_mobaxterm)
         m.addAction(tr("Import OpenSSH config…"), self.import_ssh_config)
         m.addAction(tr("Import iTerm2 profiles…"), self.import_iterm)
+        m.addAction(tr("Import SecureCRT sessions…"), self.import_securecrt)
         m.exec(self.session_tree.viewport().mapToGlobal(pos))
 
     def _groups(self):
@@ -1222,6 +1224,20 @@ class MainWindow(QMainWindow):
     def import_putty(self):
         self._import_sessions("PuTTY", config.import_putty_sessions(),
                               tr("PuTTY does not store passwords, so enter the password when you first connect."))
+
+    def import_securecrt(self):
+        from PySide6.QtWidgets import QFileDialog
+        from . import securecrt
+        found = securecrt.default_dirs()
+        start = str(found[0]) if found else str(Path.home())
+        folder = QFileDialog.getExistingDirectory(self, tr("Select the SecureCRT Sessions folder"), start)
+        if not folder:
+            return
+        sessions, skipped = securecrt.import_securecrt_sessions(Path(folder))
+        note = tr("Sub-folders became groups. Saved passwords are not imported; enter them when you first connect.")
+        if skipped:
+            note += "\n" + tr("{n} sessions that are not SSH (Telnet, Serial, RDP, …) were skipped.", n=skipped)
+        self._import_sessions("SecureCRT", sessions, note)
 
     def import_iterm(self):
         from PySide6.QtWidgets import QFileDialog

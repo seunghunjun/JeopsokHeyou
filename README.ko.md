@@ -41,7 +41,10 @@
 - **🔐 선택형 마스터 비밀번호** — 기본은 꺼짐. 켜면 저장된 비밀번호와 키 암호를 마스터 비밀번호로 암호화(AES-256-GCM + scrypt)하고, 한 번만 보여 주는 복구 키와 미사용 시 자동 잠금을 제공합니다.
 - **🔑 키체인** — SSH 키와 저장된 비밀번호를 한곳에서 확인하고, ed25519 키를 만들고 공개키를 복사합니다.
 - **⌨️ 스니펫** — 자주 쓰는 명령을 저장해 두고 터미널에 붙여넣거나 바로 실행합니다(Ctrl+Shift+P).
-- **📥 클릭 한 번으로 가져오기** — **PuTTY**, **Tabby**, **MobaXterm**(MobaSSHTunnel 터널 포함), **OpenSSH config**(`~/.ssh/config`) 파일.
+- **🔎 터미널 검색** — 화면과 스크롤백에서 찾고, 찾은 곳을 강조합니다(macOS ⌘F, 그 외 Ctrl+Shift+G).
+- **🖍️ 키워드 강조** — ERROR는 빨강, WARN은 노랑, SUCCESS는 초록. 원하는 단어와 색을 직접 정할 수 있습니다.
+- **📝 세션 로그** — 터미널에 보이는 내용을 시각과 함께 텍스트 파일로 저장합니다. 창 하나만 또는 모든 세션을 기록합니다.
+- **📥 클릭 한 번으로 가져오기** — **PuTTY**, **Tabby**, **MobaXterm**(MobaSSHTunnel 터널 포함), **SecureCRT**(폴더·포트 포워딩·점프 호스트), **iTerm2** 프로필과 색상 테마, **OpenSSH config**(`~/.ssh/config`) 파일.
 - **⏱️ 미사용 시 자동 접속 종료** — 세션별 또는 전체 설정, 종료 1분 전 경고, 파일 전송 중에는 끊지 않습니다.
 - **🛡️ 기본이 안전** — 호스트 키 검증(처음 접속 시 확인, 바뀌면 차단)과 알려진 호스트 화면, 요청할 때만 비밀번호 저장, 개인키는 경로만 저장합니다.
 - **🎨 Finder 스타일 UI** — 라이트/다크 테마, 선명한 벡터 아이콘, 한글 손글씨 글꼴(Gaegu) 선택 가능.
@@ -135,7 +138,7 @@ Termius는 호스트를 암호화해 저장하고 호스트 내보내기 기능�
 | **포트 포워딩 (로컬 / 원격 / SOCKS)** | ✅ | ✅ | ✅ | ✅ |
 | **점프 호스트** | ✅ | ✅ | ✅ | ✅ |
 | **스니펫** | ✅ | ❌ | ? | ✅ |
-| **PuTTY / Tabby / MobaXterm / SSH config 가져오기** | ✅ / ✅ / ✅ / ✅ | — | ? | ? |
+| **PuTTY / Tabby / MobaXterm / SecureCRT / iTerm2 / SSH config 가져오기** | ✅ 모두 | — | ? | ? |
 | **미사용 시 자동 접속 종료** | ✅ | ? | ? | ? |
 | **호스트 키 검증** | ✅ | ✅ | ✅ | ✅ |
 | **비밀번호 저장** | 🟡 선택 (OS 보호, 선택형 마스터 비밀번호) | ❌ 의도적으로 미지원 | ✅ 볼트 | ✅ 마스터 비밀번호 |
@@ -227,7 +230,7 @@ python -m venv .venv
 | SSH / SFTP / 포워딩 | paramiko (OpenSSH 호환, 최신 알고리즘만) |
 | 암호화 | cryptography / OpenSSL (AES-256-GCM, scrypt, ed25519), bcrypt, PyNaCl (paramiko 경유) |
 | 비밀정보 | Windows DPAPI (`CryptProtectData`) / macOS 키체인 (`security`), 선택형 마스터 비밀번호 볼트 |
-| 가져오기 | Windows 레지스트리 / `~/.putty` (PuTTY), PyYAML (Tabby), `MobaXterm.ini` / `.mxtsessions` (MobaXterm), `~/.ssh/config` (OpenSSH) |
+| 가져오기 | Windows 레지스트리 / `~/.putty` (PuTTY), PyYAML (Tabby), `MobaXterm.ini` / `.mxtsessions` (MobaXterm), SecureCRT 세션 파일, iTerm2 프로필 / `.itermcolors`, `~/.ssh/config` (OpenSSH) |
 
 ## 🗺️ 로드맵
 
@@ -263,7 +266,7 @@ GitHub의 모든 릴리스는 태그된 소스에서 GitHub Actions로 빌드되
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)와 [licenses/](licenses/)를 참고하세요. 앱 아이콘은 ChatGPT로 만들었고,
 나머지 아이콘은 직접 그린 SVG입니다.
 
-PuTTY, Tabby, MobaXterm, Termius, Windows, macOS, Finder는 각 소유자의 상표입니다. 접속해유는 독립 프로젝트이며
+PuTTY, Tabby, MobaXterm, SecureCRT, iTerm2, Termius, Windows, macOS, Finder는 각 소유자의 상표입니다. 접속해유는 독립 프로젝트이며
 이들과 관계가 없습니다.
 
 ## 🤝 기여와 보안

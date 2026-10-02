@@ -42,7 +42,10 @@ JeopsokHeyou(ジョプソクヘユ、韓国語で「つなごうよ」をくだ�
 - **🔐 任意のマスターパスワード** — 既定はオフ。有効にすると保存したパスワードと鍵のパスフレーズをマスターパスワードで暗号化(AES-256-GCM + scrypt)し、一度だけ表示される回復キーと、未使用時の自動ロックを提供します。
 - **🔑 キーチェーン** — SSH 鍵と保存済みパスワードを一か所で確認し、ed25519 鍵の生成と公開鍵のコピーができます。
 - **⌨️ スニペット** — よく使うコマンドを保存し、ターミナルに貼り付けたりすぐ実行したりできます(Ctrl+Shift+P)。
-- **📥 ワンクリック読み込み** — **PuTTY**、**Tabby**、**MobaXterm**(MobaSSHTunnel のトンネルを含む)、**OpenSSH config**(`~/.ssh/config`)ファイル。
+- **🔎 ターミナル内検索** — 画面とスクロールバックを検索し、一致箇所を強調表示します(macOS は ⌘F、その他は Ctrl+Shift+G)。
+- **🖍️ キーワードの強調表示** — ERROR は赤、WARN は黄、SUCCESS は緑。単語と色は自由に設定できます。
+- **📝 セッションログ** — ターミナルの表示内容を時刻付きのテキストファイルに保存します。ペイン単位でも全セッションでも記録できます。
+- **📥 ワンクリック読み込み** — **PuTTY**、**Tabby**、**MobaXterm**(MobaSSHTunnel のトンネルを含む)、**SecureCRT**(フォルダー・ポート転送・踏み台ホスト)、**iTerm2** のプロファイルとカラースキーム、**OpenSSH config**(`~/.ssh/config`)ファイル。
 - **⏱️ 未使用時の自動切断** — セッション単位または全体で設定、切断 1 分前に警告、ファイル転送中は切断しません。
 - **🛡️ 既定で安全** — ホスト鍵の検証(初回接続時に確認、変わったらブロック)と既知のホスト画面、パスワードは求められたときだけ保存、秘密鍵はパスのみ保存します。
 - **🎨 Finder 風の UI** — ライト/ダークテーマ、くっきりしたベクターアイコン、韓国語の手書きフォント(Gaegu)も選べます。
@@ -136,7 +139,7 @@ Termius はホストを暗号化して保存し、ホストの書き出し機能
 | **ポート転送 (ローカル / リモート / SOCKS)** | ✅ | ✅ | ✅ | ✅ |
 | **踏み台ホスト** | ✅ | ✅ | ✅ | ✅ |
 | **スニペット** | ✅ | ❌ | ? | ✅ |
-| **PuTTY / Tabby / MobaXterm / SSH config の読み込み** | ✅ / ✅ / ✅ / ✅ | — | ? | ? |
+| **PuTTY / Tabby / MobaXterm / SecureCRT / iTerm2 / SSH config の読み込み** | ✅ すべて | — | ? | ? |
 | **未使用時の自動切断** | ✅ | ? | ? | ? |
 | **ホスト鍵の検証** | ✅ | ✅ | ✅ | ✅ |
 | **パスワードの保存** | 🟡 任意 (OS で保護、任意のマスターパスワード) | ❌ 意図的に非対応 | ✅ ボールト | ✅ マスターパスワード |
@@ -228,7 +231,7 @@ python -m venv .venv
 | SSH / SFTP / 転送 | paramiko (OpenSSH 互換、最新のアルゴリズムのみ) |
 | 暗号 | cryptography / OpenSSL (AES-256-GCM、scrypt、ed25519)、bcrypt、PyNaCl (paramiko 経由) |
 | 秘密情報 | Windows DPAPI (`CryptProtectData`) / macOS キーチェーン (`security`)、任意のマスターパスワードのボールト |
-| 読み込み | Windows レジストリ / `~/.putty` (PuTTY)、PyYAML (Tabby)、`MobaXterm.ini` / `.mxtsessions` (MobaXterm)、`~/.ssh/config` (OpenSSH) |
+| 読み込み | Windows レジストリ / `~/.putty` (PuTTY)、PyYAML (Tabby)、`MobaXterm.ini` / `.mxtsessions` (MobaXterm)、SecureCRT のセッションファイル、iTerm2 のプロファイル / `.itermcolors`、`~/.ssh/config` (OpenSSH) |
 
 ## 🗺️ ロードマップ
 
@@ -264,7 +267,7 @@ GitHub のすべてのリリースはタグ付けされたソースから GitHub
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) と [licenses/](licenses/) をご覧ください。アプリのアイコンは ChatGPT で作成し、
 その他のアイコンはオリジナルの SVG です。
 
-PuTTY、Tabby、MobaXterm、Termius、Windows、macOS、Finder は各所有者の商標です。JeopsokHeyou は独立したプロジェクトであり、
+PuTTY、Tabby、MobaXterm、SecureCRT、iTerm2、Termius、Windows、macOS、Finder は各所有者の商標です。JeopsokHeyou は独立したプロジェクトであり、
 これらとは関係ありません。
 
 ## 🤝 コントリビューションとセキュリティ

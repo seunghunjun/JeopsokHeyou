@@ -381,6 +381,7 @@ class HostsPage(QWidget):
         m.addAction(tr("Import MobaXterm sessions…"), self.main.import_mobaxterm)
         m.addAction(tr("Import OpenSSH config…"), self.main.import_ssh_config)
         m.addAction(tr("Import iTerm2 profiles…"), self.main.import_iterm)
+        m.addAction(tr("Import SecureCRT sessions…"), self.main.import_securecrt)
         imp.setMenu(m)
         self.import_menu = m
         top.addWidget(imp)

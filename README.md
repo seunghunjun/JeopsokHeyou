@@ -45,7 +45,10 @@ No account required. Free and open source (GPL-3.0).
 - **🔐 Optional master password** — off by default; when on, saved passwords and key passphrases are encrypted with it (AES-256-GCM + scrypt), with a one-time recovery key and auto-lock when idle.
 - **🔑 Keychain** — see your SSH keys and saved passwords in one place, generate an ed25519 key and copy its public key.
 - **⌨️ Snippets** — save frequently used commands and paste or run them in the terminal (Ctrl+Shift+P).
-- **📥 One-click import** — sessions from **PuTTY**, **Tabby**, **MobaXterm** (including MobaSSHTunnel tunnels) and **OpenSSH config** (`~/.ssh/config`) files.
+- **🔎 Find in the terminal** — search the screen and scrollback with highlighted matches (⌘F on macOS, Ctrl+Shift+G elsewhere).
+- **🖍️ Keyword highlighting** — ERROR in red, WARN in yellow, SUCCESS in green, or your own words and colors.
+- **📝 Session logs** — save what a terminal shows as plain text, with time stamps, for one pane or every session.
+- **📥 One-click import** — sessions from **PuTTY**, **Tabby**, **MobaXterm** (including MobaSSHTunnel tunnels), **SecureCRT** (folders, port forwards, jump hosts), **iTerm2** profiles and color schemes, and **OpenSSH config** (`~/.ssh/config`) files.
 - **⏱️ Idle auto-disconnect** — per session or global, with a one-minute warning; never disconnects during a transfer.
 - **🛡️ Safe by default** — host-key verification (trust on first use, block on mismatch) with a Known Hosts screen, passwords not saved unless you ask, private keys referenced by path only.
 - **🎨 Finder-style UI** — light and dark themes, crisp vector icons, Korean handwriting font (Gaegu) as an option.
@@ -139,7 +142,7 @@ same servers in `~/.ssh/config`, import that file with **Home → Hosts → Impo
 | **Port forwarding (local / remote / SOCKS)** | ✅ | ✅ | ✅ | ✅ |
 | **Jump hosts** | ✅ | ✅ | ✅ | ✅ |
 | **Snippets** | ✅ | ❌ | ? | ✅ |
-| **Import PuTTY / Tabby / MobaXterm / SSH config** | ✅ / ✅ / ✅ / ✅ | — | ? | ? |
+| **Import PuTTY / Tabby / MobaXterm / SecureCRT / iTerm2 / SSH config** | ✅ all | — | ? | ? |
 | **Idle auto-disconnect** | ✅ | ? | ? | ? |
 | **Host-key verification** | ✅ | ✅ | ✅ | ✅ |
 | **Saved passwords** | 🟡 optional (OS-protected, optional master password) | ❌ by design | ✅ vault | ✅ master password |
@@ -232,7 +235,7 @@ push; pushing a `v*` tag builds all installers and drafts a GitHub Release.
 | SSH / SFTP / forwarding | paramiko (OpenSSH-compatible, modern algorithms only) |
 | Crypto | cryptography / OpenSSL (AES-256-GCM, scrypt, ed25519), bcrypt, PyNaCl (via paramiko) |
 | Secrets | Windows DPAPI (`CryptProtectData`) / macOS Keychain (`security`), optional master-password vault |
-| Import | Windows registry / `~/.putty` (PuTTY), PyYAML (Tabby), `MobaXterm.ini` / `.mxtsessions` (MobaXterm), `~/.ssh/config` (OpenSSH) |
+| Import | Windows registry / `~/.putty` (PuTTY), PyYAML (Tabby), `MobaXterm.ini` / `.mxtsessions` (MobaXterm), SecureCRT session files, iTerm2 profiles / `.itermcolors`, `~/.ssh/config` (OpenSSH) |
 
 ## 🗺️ Roadmap
 
@@ -286,7 +289,7 @@ Third-party libraries (Qt/PySide6, paramiko, pyte, …) and the Gaegu font keep 
 all compatible with GPL-3.0 — see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and
 [licenses/](licenses/). The app icon was generated with ChatGPT; all other icons are original SVGs.
 
-PuTTY, Tabby, MobaXterm, Termius, Windows, macOS and Finder are trademarks of their respective owners.
+PuTTY, Tabby, MobaXterm, SecureCRT, iTerm2, Termius, Windows, macOS and Finder are trademarks of their respective owners.
 JeopsokHeyou is an independent project and is not affiliated with them.
 
 ## 🤝 Contributing & Security
