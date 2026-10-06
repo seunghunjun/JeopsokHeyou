@@ -72,6 +72,10 @@ No account required. Free and open source (GPL-3.0).
     <td width="50%"><img src=".github/media/split-panes.png" alt="Three terminal panes on one connection" /><br/><sub><b>Split panes</b> — nested left/right and top/bottom splits</sub></td>
     <td width="50%"><img src=".github/media/home-dark.png" alt="Dark theme" /><br/><sub><b>Dark mode</b> — follows the system or pick it yourself</sub></td>
   </tr>
+  <tr>
+    <td width="50%"><img src=".github/media/disk.png" alt="Server disk space card" /><br/><sub><b>Disk space</b> — every disk at a glance, warnings at your levels</sub></td>
+    <td width="50%"><img src=".github/media/guide.png" alt="Getting started guide" /><br/><sub><b>Getting started guide</b> — six basics and three differences</sub></td>
+  </tr>
 </table>
 
 ## 📦 Install

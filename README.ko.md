@@ -68,6 +68,10 @@
     <td width="50%"><img src=".github/media/split-panes.png" alt="한 연결에 터미널 3개" /><br/><sub><b>화면 분할</b> — 좌우·상하 중첩 분할</sub></td>
     <td width="50%"><img src=".github/media/home-dark.png" alt="다크 테마" /><br/><sub><b>다크 모드</b> — 시스템 설정을 따르거나 직접 선택</sub></td>
   </tr>
+  <tr>
+    <td width="50%"><img src=".github/media/disk.png" alt="서버 디스크 용량 카드" /><br/><sub><b>디스크 용량</b> — 모든 디스크를 한눈에, 내가 정한 기준으로 경고</sub></td>
+    <td width="50%"><img src=".github/media/guide.png" alt="시작 가이드" /><br/><sub><b>시작 가이드</b> — 기본 6단계와 차별 기능 3가지</sub></td>
+  </tr>
 </table>
 
 <sub>스크린샷은 영어 UI로 촬영했습니다. 실제 앱은 한국어로 표시됩니다.</sub>

@@ -69,6 +69,10 @@ JeopsokHeyou(ジョプソクヘユ、韓国語で「つなごうよ」をくだ�
     <td width="50%"><img src=".github/media/split-panes.png" alt="1 接続に 3 つのターミナル" /><br/><sub><b>画面分割</b> — 左右・上下の入れ子分割</sub></td>
     <td width="50%"><img src=".github/media/home-dark.png" alt="ダークテーマ" /><br/><sub><b>ダークモード</b> — システム設定に従うか自分で選択</sub></td>
   </tr>
+  <tr>
+    <td width="50%"><img src=".github/media/disk.png" alt="サーバーのディスク容量カード" /><br/><sub><b>ディスク容量</b> — すべてのディスクをひと目で、自分の基準で警告</sub></td>
+    <td width="50%"><img src=".github/media/guide.png" alt="はじめにガイド" /><br/><sub><b>はじめにガイド</b> — 基本の 6 ステップと独自の機能 3 つ</sub></td>
+  </tr>
 </table>
 
 <sub>スクリーンショットは英語の UI で撮影しています。実際のアプリは日本語で表示されます。</sub>

@@ -53,7 +53,14 @@ def main() -> int:
     srv.stdout.readline()
     app = QApplication([])
     QMessageBox.question = staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes)
-    from jeopsokheyou import config, i18n
+    from jeopsokheyou import config, diskusage, i18n
+    # Disk space: the fake server has no statvfs, so show made-up numbers (nothing real is captured)
+    gb = 1 << 30
+    diskusage.read_mounts = lambda sftp: ("/dev/sda1 / ext4 rw 0 0\n/dev/sdb1 /data xfs rw 0 0\n"
+                                          "/dev/sdc1 /var/log ext4 rw 0 0\n192.0.2.50:/vol1 /backup nfs4 rw 0 0\n")
+    fake_disks = {"/": (50 * gb, 21 * gb, 29 * gb), "/data": (1024 * gb, 820 * gb, 204 * gb),
+                  "/var/log": (20 * gb, 17 * gb, 3 * gb)}
+    diskusage.statvfs = lambda sftp, path: fake_disks.get(path)
     from jeopsokheyou.config import Session
     from jeopsokheyou.mainwindow import MainWindow, apply_dark_theme
     apply_dark_theme(app)
@@ -102,9 +109,22 @@ def main() -> int:
             s.group = "Production / Databases"
     w.store.save()
     w.reload_sessions()
+    # last disk values on a few host cards
+    import json
+    cache = {}
+    for s, pct in zip([s for s in w.store.sessions if s is not demo][:4], (42, 7, 63, 18)):
+        cache[s.id] = {"time": time.time() - 3600, "mount": "/data", "free_pct": pct, "avail": pct * gb,
+                       "total_avail": pct * gb, "total": 100 * gb, "total_free_pct": pct}
+    diskusage.cache_file().write_text(json.dumps(cache), encoding="utf-8")
     w.apply_appearance(mode="light", ui_font="default")
     w.home.show_page("hosts")
     shot(w, "home.png")
+    # getting-started guide (step 2: the New host button highlighted)
+    t = w.start_tour(from_help=True)
+    t.next()
+    shot(w, "guide.png", frame=False)
+    t.skip()
+    w.home.show_page("hosts")
     w.home.show_page("forwarding")
     shot(w, "port-forwarding.png", frame=False)
     w.home.show_page("hosts")
@@ -117,7 +137,19 @@ def main() -> int:
     pane.feed(b"ls --color\r\n\x1b[1;34mbackup\x1b[0m  \x1b[1;34mconf\x1b[0m  \x1b[1;34mlogs\x1b[0m  "
               b"\x1b[1;34mwebapps\x1b[0m  app.jar  application.yml  \x1b[32mdeploy.sh\x1b[0m  server.xml\r\n"
               b"tester:/home/tester$ ")
+    pump(5, lambda: tab.explorer.disk_pill.isVisible())
     shot(w, "main-light.png")
+    # disk space card over the window (the card is a popup window, so paste it in)
+    tab.explorer.show_disk_card()
+    pump(0.5)
+    base = shot(w, None, frame=False)
+    card = tab.explorer._disk_card
+    card.grab().save(str(WORK / "card.png"))
+    pos = card.mapToGlobal(card.rect().topLeft()) - w.mapToGlobal(w.rect().topLeft())
+    overlay = Image.open(WORK / "card.png").convert("RGBA")
+    base.paste(overlay, (max(0, pos.x()), max(0, pos.y())), overlay)
+    base.save(OUT / "disk.png", optimize=True)
+    card.hide()
 
     # cd in the terminal → the explorer follows
     pane.send_text("cd logs\r")
