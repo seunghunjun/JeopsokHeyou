@@ -32,12 +32,13 @@ switching to a separate program to move files. No account, no telemetry, no clou
 
 No account required. Free and open source (GPL-3.0).
 
+- **🧭 Getting started guide** — a short tour on first start: six basics plus three things JeopsokHeyou does differently. Close it and it continues next time; replay it from *Help → Getting started guide*.
 - **🏠 Home screen** — the start page with your recent sessions, plus a menu for Hosts, Keychain, Port Forwarding, Snippets, Known Hosts and History.
 - **🗃️ Hosts screen** — groups and hosts as a tree and as cards, a clickable path (*All hosts › Production › DB*), search, right-click menus everywhere and a side panel for editing. Type `user@host` in the search box to connect right away.
 - **📁 Groups and subgroups** — nest groups as deep as you like; drag sessions between groups; a collapsible session list sits next to every terminal tab.
 - **🗂️ Terminal + SFTP side by side** — every connection tab shows a remote file explorer next to the shell.
 - **🔗 Two-way folder sync** — `cd` in the terminal and the explorer follows; open a folder in the explorer and the terminal quietly `cd`s there (bash/zsh). It never types into a running program or over a half-written command.
-- **🖱️ Drag & drop both ways** — drop files from Explorer or Finder to upload; drag remote files onto a folder window or the desktop to download there. Asks before overwriting a file that already exists (overwrite / skip / cancel). Background transfers with progress and cancel; resizable columns that remember their widths.
+- **🖱️ Drag & drop both ways** — drop files from Explorer or Finder to upload; drag remote files onto a folder window or the desktop to download there. Asks before overwriting a file that already exists (overwrite / skip / cancel). Background transfers with progress and cancel; resizable columns that remember their widths. Folder downloads follow folder links safely (no loops, never opening FIFOs or devices that would hang the server) and ask first when they get bigger than your limit (1 GB or 10,000 files by default).
 - **✏️ Edit remote files locally** — double-click to open in your usual app; save and JeopsokHeyou offers to upload the change (only when the content really changed). "Open with…" is built in.
 - **🪟 Tabs & split panes** — split left/right or top/bottom on the same connection, close any pane with one click. Long lines re-wrap when a pane gets wider or narrower.
 - **🔀 Port forwarding** — local (`-L`), remote (`-R`) and dynamic SOCKS4/5 (`-D`) forwards, opened with a session or kept running on their own as tunnels with autostart, automatic reconnect and live connection counts.
@@ -163,7 +164,7 @@ no account, no analytics, no auto-update service.
 
 | Topic | How it works |
 | --- | --- |
-| **Where data lives** | Windows `%APPDATA%\JeopsokHeyou\`, macOS `~/Library/Application Support/JeopsokHeyou/` — `sessions.json`, `tunnels.json`, `snippets.json`, `history.json`, `known_hosts`, `settings.json`, `disk_cache.json` (and `vault.json` when a master password is set). Nothing is written next to the program. |
+| **Where data lives** | Windows `%APPDATA%\JeopsokHeyou\`, macOS `~/Library/Application Support/JeopsokHeyou/` — `sessions.json`, `tunnels.json`, `snippets.json`, `history.json`, `known_hosts`, `settings.json`, `disk_cache.json` (and `vault.json` when a master password is set). A diagnostic log (connections, transfers, errors — never passwords or terminal content) is kept in `logs/app.log` (macOS: `~/Library/Logs/JeopsokHeyou/`), 1 MB × 4 files at most; *Help → Open app log folder*. Nothing is written next to the program. |
 | **Passwords** | Not saved unless you tick *Save password*. By default: Windows DPAPI (bound to your Windows account) or your macOS login Keychain. With the optional master password: AES-256-GCM with a random data key, wrapped by scrypt-derived keys from the master password and from a one-time recovery key. Only secrets are locked — the session list stays readable. |
 | **Master password lost** | Unlock with the recovery key. If both are lost, *Reset* deletes only the saved secrets; sessions, groups and settings stay. There is no back door. |
 | **Private keys** | Only the key **path** is stored. OpenSSH format (convert PuTTY `.ppk` with PuTTYgen). SSH agent (Pageant/OpenSSH) is used for key sessions. Keys generated in the Keychain screen are written to `~/.ssh` and never overwrite an existing file. |

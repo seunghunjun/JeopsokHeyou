@@ -1226,6 +1226,7 @@ class HomeTab(QWidget):
         settings.setObjectName("NavButton")
         settings.clicked.connect(self.main.open_settings)
         nl.addWidget(settings)
+        self.settings_btn = settings
         lay.addWidget(nav)
         self.stack = QStackedWidget()
         self.stack.setObjectName("Page")

@@ -265,6 +265,10 @@ QLabel#Muted {{ color: {t.muted}; }}
 #DiskBanner[level="crit"] QLabel {{ color: {"#FF9C94" if t.dark else "#9B1C14"}; font-weight: 600; }}
 #DiskBanner QPushButton {{ padding: 2px 12px; }}
 QLabel#DiskCardTitle {{ font-size: 15px; font-weight: 600; }}
+QFrame#TourCard {{ background: {t.menu if t.dark else t.content}; border: 1px solid {t.sep}; border-radius: 14px; }}
+QLabel#TourTitle {{ font-size: 17px; font-weight: 600; }}
+QPushButton#TourLink {{ border: none; background: transparent; color: {t.muted}; padding: 4px 2px; }}
+QPushButton#TourLink:hover {{ color: {t.accent}; }}
 QLabel#Title {{ font-size: 22px; font-weight: 600; }}
 QLabel#Section {{ color: {t.faint}; font-size: 11px; font-weight: 600; }}
 
