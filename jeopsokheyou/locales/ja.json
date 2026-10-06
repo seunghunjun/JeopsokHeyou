@@ -531,5 +531,14 @@
   "Host cards": "ホストカード",
   "Last connected: {time}": "最終接続: {time}",
   "Show when each host was last connected on its card": "カードに最終接続の時期を表示",
-  "{month}/{day}": "{month}月{day}日"
+  "{month}/{day}": "{month}月{day}日",
+  "Automatic": "自動",
+  "Blue": "青",
+  "Brown": "茶",
+  "Green": "緑",
+  "Indigo": "藍",
+  "Orange": "オレンジ",
+  "Purple": "紫",
+  "Red": "赤",
+  "Teal": "青緑"
 }

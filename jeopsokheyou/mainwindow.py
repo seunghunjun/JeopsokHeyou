@@ -1191,6 +1191,8 @@ class MainWindow(QMainWindow):
         elif group is not None:
             m.addAction(tr("New session in this group…"), lambda: self.new_session(group))
             m.addAction(tr("Rename group…"), lambda: self.rename_group(group))
+            from .home import add_color_menu
+            add_color_menu(m, self, group)
             m.addAction(tr("Delete group"), lambda: self.remove_group(group))
             m.addSeparator()
         m.addAction(tr("New session…"), self.new_session)
@@ -1251,6 +1253,10 @@ class MainWindow(QMainWindow):
             return
         self.store.remove_group(name)
         self._collapsed.discard(name)
+        self.reload_sessions()
+
+    def set_group_color(self, group: str, color: str):
+        self.store.set_group_color(group, color)
         self.reload_sessions()
 
     def _move_sessions(self, ids: list[str], group: str):

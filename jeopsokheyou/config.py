@@ -237,28 +237,39 @@ def in_group(group: str, ancestor: str) -> bool:
     return group == ancestor or group.startswith(ancestor + GROUP_SEP)
 
 
+# Group colors (host card tiles): (name shown in the menu, color)
+GROUP_COLORS = (("Blue", "#0A84FF"), ("Red", "#FF375F"), ("Green", "#34C759"), ("Orange", "#FF9F0A"),
+                ("Purple", "#AF52DE"), ("Teal", "#30B0C7"), ("Indigo", "#5E5CE6"), ("Brown", "#A2845E"))
+NO_GROUP_COLOR = "#8E8E93"
+
+
 class SessionStore:
     def __init__(self, path: Path = SESSIONS_FILE):
         self.path = path
         self.sessions: list[Session] = []
         self._groups: list[str] = []   # groups kept even when empty
+        self.group_colors: dict[str, str] = {}   # colors picked by the user (group path -> #RRGGBB)
         self.load()
 
     def load(self) -> None:
         if not self.path.exists():
-            self.sessions, self._groups = [], []
+            self.sessions, self._groups, self.group_colors = [], [], {}
             return
         try:
             data = json.loads(self.path.read_text(encoding="utf-8"))
             self.sessions = [Session.from_dict(d) for d in data.get("sessions", [])]
             self._groups = [g for g in data.get("groups", []) if isinstance(g, str) and g]
+            colors = data.get("group_colors", {})
+            self.group_colors = {k: v for k, v in colors.items() if isinstance(k, str) and isinstance(v, str)} \
+                if isinstance(colors, dict) else {}
         except Exception:
-            self.sessions, self._groups = [], []
+            self.sessions, self._groups, self.group_colors = [], [], {}
 
     def save(self) -> None:
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(
-            json.dumps({"groups": self.groups(), "sessions": [asdict(s) for s in self.sessions]},
+            json.dumps({"groups": self.groups(), "group_colors": self.group_colors,
+                        "sessions": [asdict(s) for s in self.sessions]},
                        ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
@@ -271,6 +282,29 @@ class SessionStore:
             if s.group and s.group not in names:
                 names.append(s.group)
         return sorted(names, key=str.lower)
+
+    def group_color(self, name: str) -> str:
+        """Tile color for a group: the color picked for it or its nearest parent; otherwise each top-level
+        group gets its own color in order (no two alike for the first eight). No group: gray."""
+        if not name:
+            return NO_GROUP_COLOR
+        g = name
+        while g:
+            if g in self.group_colors:
+                return self.group_colors[g]
+            g = group_parent(g)
+        tops = sorted({x.split(GROUP_SEP)[0] for x in self.groups()}, key=str.lower)
+        top = name.split(GROUP_SEP)[0]
+        i = tops.index(top) if top in tops else sum(map(ord, top))
+        return GROUP_COLORS[i % len(GROUP_COLORS)][1]
+
+    def set_group_color(self, name: str, color: str) -> None:
+        """Pick a color for a group and its subgroups ("" = automatic again)."""
+        if color:
+            self.group_colors[name] = color
+        else:
+            self.group_colors.pop(name, None)
+        self.save()
 
     def add_group(self, name: str) -> bool:
         name = name.strip()
@@ -291,6 +325,7 @@ class SessionStore:
             self._groups.append(new)
         for s in self.sessions:
             s.group = renamed(s.group)
+        self.group_colors = {renamed(k): v for k, v in self.group_colors.items()}
         self.save()
         return True
 
@@ -309,6 +344,7 @@ class SessionStore:
         (the top level for a top-level group). Returns the number moved."""
         parent = group_parent(name)
         self._groups = [g for g in self._groups if not in_group(g, name)]
+        self.group_colors = {k: v for k, v in self.group_colors.items() if not in_group(k, name)}
         moved = 0
         for s in self.sessions:
             if in_group(s.group, name):

@@ -197,5 +197,39 @@ w.settings["card_last_connected"] = False
 hp.refresh()
 check("can be turned off", hp.cards[a.id].note is None)
 w.settings["card_last_connected"] = True
+
+# group colors: top-level groups never share a color automatically; a picked color wins and moves along
+from jeopsokheyou import config as cfg  # noqa: E402
+
+VERIFY = chr(44160) + chr(51613)   # Korean group name
+OPS = chr(50868) + chr(50689)   # Korean group name
+DEVK = chr(44060) + chr(48156)   # Korean group name
+for name in (VERIFY, OPS, DEVK, "Alpha", "Beta"):
+    st.add_group(name)
+tops = sorted({g.split(cfg.GROUP_SEP)[0] for g in st.groups()}, key=str.lower)
+auto = [st.group_color(t) for t in tops]
+check("automatic colors differ between top-level groups", len(set(auto)) == min(len(tops), 8), (tops, auto))
+check("subgroups use the top-level color", st.group_color("Staging") == st.group_color("Staging"))
+st.add_group(OPS + " / DB")
+check("subgroup follows its parent", st.group_color(OPS + " / DB") == st.group_color(OPS))
+check("no group is gray", st.group_color("") == cfg.NO_GROUP_COLOR)
+w.set_group_color(OPS, "#FF375F")
+check("picked color used", st.group_color(OPS) == "#FF375F" and st.group_color(OPS + " / DB") == "#FF375F")
+x = Session(host="192.0.2.50", name="ops-1", group=OPS + " / DB")
+st.upsert(x)
+hp.open_group("")
+hp.refresh()
+pump()
+check("host card tile uses the group color", "#FF375F" in hp.cards[x.id].findChild(home.QLabel, "Tile").styleSheet())
+st.rename_group(OPS, "Operations")
+check("color follows a rename", st.group_color("Operations / DB") == "#FF375F")
+st.move_group("Operations", "Alpha")
+check("color follows a move", st.group_color("Alpha / Operations") == "#FF375F")
+reloaded = cfg.SessionStore(st.path)
+check("color saved", reloaded.group_colors.get("Alpha / Operations") == "#FF375F")
+w.set_group_color("Alpha / Operations", "")
+check("Automatic clears it", "Alpha / Operations" not in st.group_colors)
+st.remove_group("Alpha")
+check("deleting a group forgets its colors", not any(k.startswith("Alpha") for k in st.group_colors))
 w.close()
 print("DONE")

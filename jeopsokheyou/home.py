@@ -272,6 +272,21 @@ class Card(QFrame):
 TILE_COLORS = ("#0A84FF", "#30B0C7", "#34C759", "#FF9F0A", "#AF52DE", "#FF375F", "#5E5CE6", "#64D2FF")
 
 
+def add_color_menu(menu: QMenu, main, group: str) -> QMenu:
+    """"Color" submenu for a group: Automatic or one of the palette colors."""
+    sub = menu.addMenu(icons.dot(main.store.group_color(group)), tr("Color"))
+    current = main.store.group_colors.get(group, "")
+    a = sub.addAction(tr("Automatic"), lambda: main.set_group_color(group, ""))
+    a.setCheckable(True)
+    a.setChecked(not current)
+    sub.addSeparator()
+    for label, color in config.GROUP_COLORS:
+        a = sub.addAction(icons.dot(color), tr(label), lambda c=color: main.set_group_color(group, c))
+        a.setCheckable(True)
+        a.setChecked(current == color)
+    return sub
+
+
 def tile_color(key: str) -> str:
     return TILE_COLORS[sum(map(ord, key)) % len(TILE_COLORS)]
 
@@ -769,7 +784,8 @@ class HostsPage(QWidget):
         groups = [] if q else self._child_groups(self.group)
         for g in groups:
             n = sum(1 for s in store.sessions if config.in_group(s.group, g))
-            c = Card(config.group_leaf(g), tr("1 host") if n == 1 else tr("{n} hosts", n=n), "folder", "#8E8E93",
+            c = Card(config.group_leaf(g), tr("1 host") if n == 1 else tr("{n} hosts", n=n), "folder",
+                     store.group_color(g),
                      editable=False)
             c.clicked.connect(lambda g=g: self.open_group(g))
             c.menu_requested.connect(lambda pos, g=g: self._group_menu(g, pos))
@@ -789,7 +805,7 @@ class HostsPage(QWidget):
             sub = f"{s.user + '@' if s.user else ''}{s.host}" + (f":{s.port}" if int(s.port or 22) != 22 else "")
             if s.group and (q or not self.group):
                 sub += f"  ·  {s.group}"
-            c = Card(s.title(), sub, "server", tile_color(s.group or s.title()))
+            c = Card(s.title(), sub, "server", store.group_color(s.group))
             c.activated.connect(lambda s=s: self.main.open_session(s))
             c.clicked.connect(lambda s=s: self._host_clicked(s))
             c.edit_requested.connect(lambda s=s: self.edit(s))
@@ -998,6 +1014,7 @@ class HostsPage(QWidget):
         m.addAction(tr("New subgroup…"), lambda: self.main.add_group(parent=g))
         m.addSeparator()
         m.addAction(tr("Rename group…"), lambda: self.main.rename_group(g))
+        add_color_menu(m, self.main, g)
         m.addAction(tr("Delete group"), lambda: self.main.remove_group(g))
         m.exec(pos)
 

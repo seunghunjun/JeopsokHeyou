@@ -531,5 +531,14 @@
   "Host cards": "호스트 카드",
   "Last connected: {time}": "최근 접속: {time}",
   "Show when each host was last connected on its card": "카드에 최근 접속 시점 표시",
-  "{month}/{day}": "{month}월 {day}일"
+  "{month}/{day}": "{month}월 {day}일",
+  "Automatic": "자동",
+  "Blue": "파랑",
+  "Brown": "갈색",
+  "Green": "초록",
+  "Indigo": "남색",
+  "Orange": "주황",
+  "Purple": "보라",
+  "Red": "빨강",
+  "Teal": "청록"
 }

@@ -56,6 +56,8 @@ tables |= set(forwarding.KIND_LABELS.values()) | set(tunnels.KIND_HINTS.values()
     | {tunnels.NO_SERVER_MESSAGE} | {label for _k, label, _i in home.PAGES}
 from jeopsokheyou import tour  # noqa: E402
 tables |= {st.title for st in tour.STEPS} | {st.body for st in tour.STEPS}
+from jeopsokheyou import config as _config  # noqa: E402
+tables |= {label for label, _c in _config.GROUP_COLORS}
 used |= tables
 
 for lang in ("ko", "ja"):
