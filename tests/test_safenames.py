@@ -36,11 +36,14 @@ class FakeSftp:
         if p in self.tree: return A(p, True)
         return A(p)
     def listdir_attr(self, p): return self.tree.get(p, [])
+    def normalize(self, p): return p
     def get(self, rp, lp, callback=None):
         open(lp, "w", encoding="utf-8").write("x")
 class W:
     cancel = False
     def cb(self, *a): return None
+    class note:
+        emit = staticmethod(lambda *a: None)
 res = job_download(["/srv/pkg"], base)(FakeSftp(), W())
 written = sorted(os.path.relpath(os.path.join(r, f), base) for r, _d, fs in os.walk(base) for f in fs)
 # Names with backslashes/drives are saved inside the folder under safe names; ".." is skipped

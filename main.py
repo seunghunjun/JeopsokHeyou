@@ -8,7 +8,7 @@ import sys
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
-from jeopsokheyou import config, i18n, paths
+from jeopsokheyou import applog, config, i18n, paths
 from jeopsokheyou.mainwindow import MainWindow, apply_dark_theme
 
 
@@ -42,6 +42,7 @@ def parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
 
 def main() -> int:
     args, rest = parse_args(sys.argv[1:])
+    applog.setup()
     if sys.platform == "win32":
         # Use a separate app ID so the taskbar shows the app icon instead of the python icon
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("JeopsokHeyou.App")
@@ -62,7 +63,17 @@ def main() -> int:
     if args.self_test:
         return self_test(app, w, args.self_test)
     w.show()
-    return app.exec()
+    # Getting-started guide: shown until finished or turned off (resumes where it was closed)
+    from jeopsokheyou import tour
+    if tour.mark_first_run(w.settings):
+        config.save_settings(w.settings)
+    if tour.should_autostart(w.settings):
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(400, w.start_tour)
+    try:
+        return app.exec()
+    finally:
+        applog.shutdown()
 
 
 def self_test(app: QApplication, w: MainWindow, report_path: str) -> int:

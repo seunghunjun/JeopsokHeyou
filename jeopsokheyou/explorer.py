@@ -16,6 +16,7 @@ import posixpath
 import queue
 import stat
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -26,13 +27,14 @@ from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QHBoxLayout, QSta
                                QMessageBox, QProgressBar, QStyle, QStyledItemDelegate, QToolButton, QTreeWidget,
                                QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from . import diskusage, diskui, dragout, icons, paths, winopen
+from . import applog, diskusage, diskui, dragout, icons, paths, winopen
 from .i18n import tr
 from .safenames import UnsafeName, local_name, safe_join
 from .ssh import SshConnection
 
 
 CANCELLED = "\x00cancelled"   # internal marker emitted when a transfer is cancelled
+log = applog.get("sftp")
 
 
 class Cancelled(Exception):
@@ -56,6 +58,8 @@ class SftpWorker(QThread):
     result = Signal(str, object)
     error = Signal(str, str)
     progress = Signal(str, int, int)
+    note = Signal(str)                  # status text while a job prepares (e.g. scanning folders)
+    ask = Signal(object)                # {"info", "answer", "event"}: a question for the user (UI thread)
 
     def __init__(self, conn: SshConnection):
         super().__init__()
@@ -75,6 +79,7 @@ class SftpWorker(QThread):
         try:
             self.sftp = self.conn.open_sftp()
         except Exception as e:
+            log.warning("SFTP channel could not be opened: %s", e)
             self.error.emit("open", str(e))
             return
         while True:
@@ -84,11 +89,18 @@ class SftpWorker(QThread):
             tag, fn = item
             self.cancel = False
             self.busy = True
+            quiet = tag in ("list", "home", "disk")       # browsing: too frequent to log each one
+            if not quiet:
+                log.info("job %s started", tag)
             try:
                 self.result.emit(tag, fn(self.sftp, self))
+                if not quiet:
+                    log.info("job %s finished", tag)
             except Cancelled:
+                log.info("job %s cancelled", tag)
                 self.error.emit(tag, CANCELLED)
             except Exception as e:
+                log.warning("job %s failed: %s: %s", tag, type(e).__name__, e, exc_info=not quiet)
                 self.error.emit(tag, f"{type(e).__name__}: {e}")
             finally:
                 self.busy = False
@@ -96,6 +108,15 @@ class SftpWorker(QThread):
             self.sftp.close()
         except Exception:
             pass
+
+    def ask_user(self, info: dict) -> str:
+        """Ask the UI thread and wait for the answer (Cancel still works while waiting)."""
+        req = {"info": info, "answer": "cancel", "event": threading.Event()}
+        self.ask.emit(req)
+        while not req["event"].wait(0.2):
+            if self.cancel:
+                raise Cancelled()
+        return req["answer"]
 
     def cb(self, label: str, base: int, total: int):
         def _cb(done, _size):
@@ -113,39 +134,174 @@ def job_list(path: str, origin: str = "user"):
     return fn
 
 
-def _remote_walk_size(sftp, rpath: str) -> int:
-    st = sftp.stat(rpath)
-    if stat.S_ISDIR(st.st_mode):
-        return sum(_remote_walk_size(sftp, posixpath.join(rpath, a.filename)) for a in sftp.listdir_attr(rpath))
-    return st.st_size or 0
+DEFAULT_CONFIRM_GB = 1
+DEFAULT_CONFIRM_FILES = 10000
+# Pseudo file systems: never walked into from a link (their files can block or never end)
+PSEUDO_ROOTS = ("/proc", "/sys", "/dev", "/run")
 
 
-def job_download(remote_paths: list[str], local_dir: str):
-    def fn(sftp, w):
-        total = sum(_remote_walk_size(sftp, r) for r in remote_paths)
-        done = [0]
-        skipped: list[str] = []
+def confirm_limits(settings: dict) -> tuple[int, int]:
+    """(bytes, files) above which a download asks first; 0 means never ask for that measure."""
+    try:
+        gb = float(settings.get("download_confirm_gb", DEFAULT_CONFIRM_GB))
+        n = int(settings.get("download_confirm_files", DEFAULT_CONFIRM_FILES))
+    except (TypeError, ValueError):
+        gb, n = DEFAULT_CONFIRM_GB, DEFAULT_CONFIRM_FILES
+    return max(0, int(gb * (1 << 30))), max(0, n)
 
-        def get(rpath, ldir):
-            st = sftp.stat(rpath)
+
+class DownloadScan:
+    """Walks what to download without opening any remote file (stat / readdir / realpath only).
+
+    items() yields ("dir", local, via_link) and ("file", remote, local, size, via_link), parents first.
+    Never downloaded, so a download can never hang or loop:
+    - FIFOs, sockets and devices (opening one blocks the server's SFTP process with no way to cancel)
+    - a folder already included (link loops such as `x -> ..`, two links to the same place)
+    - /proc, /sys, /dev and /run when reached during the walk
+    Folder links are followed while follow_links is True (the user may turn that off part way).
+    A link the user picked directly is always followed.
+    """
+
+    def __init__(self, sftp, w, remote_paths: list[str], local_dir: str):
+        self.sftp, self.w = sftp, w
+        self.remote_paths, self.local_dir = remote_paths, local_dir
+        self.follow_links = True
+        self.unsafe: list[str] = []
+        self.special: list[str] = []
+        self.linked: list[str] = []      # linked folders that were followed
+        self.seen: set[str] = set()
+        self.files = 0
+        self.bytes = 0
+
+    def _real(self, rpath: str) -> str:
+        try:
+            return self.sftp.normalize(rpath)
+        except IOError:
+            return rpath
+
+    def items(self):
+        stack = [(r, self.local_dir, None, False, True) for r in reversed(self.remote_paths)]
+        while stack:
+            if self.w.cancel:
+                raise Cancelled()
+            rpath, ldir, attr, via_link, top = stack.pop()
+            if via_link and not self.follow_links:
+                continue
             name = posixpath.basename(rpath.rstrip("/")) or "root"
             try:
                 lpath = safe_join(ldir, name)   # prevent server-supplied names from writing outside the folder
             except UnsafeName:
-                skipped.append(rpath)
+                self.unsafe.append(rpath)
+                continue
+            if attr is None or not stat.S_IFMT(attr.st_mode or 0):
+                attr = self.sftp.stat(rpath)     # top level (follows a picked link) or no file type sent
+            mode = attr.st_mode or 0
+            link = False
+            if stat.S_ISLNK(mode):
+                try:
+                    attr = self.sftp.stat(rpath)
+                except IOError:
+                    self.special.append(rpath)   # broken link
+                    continue
+                mode = attr.st_mode or 0
+                link = not top
+            if stat.S_ISDIR(mode):
+                real = self._real(rpath)
+                if real in self.seen or (not top and any(real == p or real.startswith(p + "/")
+                                                         for p in PSEUDO_ROOTS)):
+                    self.special.append(rpath)
+                    continue
+                if link:
+                    if not self.follow_links:
+                        self.special.append(rpath)
+                        continue
+                    self.linked.append(rpath)
+                self.seen.add(real)
+                inner = via_link or link
+                yield ("dir", lpath, inner)
+                for a in reversed(self.sftp.listdir_attr(rpath)):   # "." / ".." end up as unsafe names
+                    stack.append((posixpath.join(rpath, a.filename), lpath, a, inner, False))
+                continue
+            if stat.S_ISREG(mode):
+                size = attr.st_size or 0
+                self.files += 1
+                self.bytes += size
+                yield ("file", rpath, lpath, size, via_link)   # a link to a file is just a file
+                continue
+            self.special.append(rpath)           # FIFO, socket, block/character device
+
+
+def job_download(remote_paths: list[str], local_dir: str, limits: tuple[int, int] | None = None):
+    """Count first; past the user's limit stop counting and ask (download all / skip linked folders /
+    cancel), then keep counting while downloading so nothing is walked twice."""
+    max_bytes, max_files = limits if limits is not None else confirm_limits({})
+
+    def fn(sftp, w):
+        scan = DownloadScan(sftp, w, remote_paths, local_dir)
+        it = scan.items()
+        last = [0.0]
+
+        def note(force=False):
+            now = time.monotonic()
+            if force or now - last[0] > 0.25:
+                last[0] = now
+                w.note.emit(tr("Checking folders… {n} files", n=scan.files))
+
+        note(True)
+        buffered = []
+        over = False
+        for item in it:
+            buffered.append(item)
+            note()
+            if (max_bytes and scan.bytes > max_bytes) or (max_files and scan.files > max_files):
+                over = True
+                break
+        skipped_links = 0
+        if over:
+            choice = w.ask_user({"bytes": scan.bytes, "files": scan.files,
+                                 "linked": [posixpath.basename(p.rstrip("/")) for p in scan.linked]})
+            log.info("download: limit passed after %d files / %d bytes; user chose %s",
+                     scan.files, scan.bytes, choice)
+            if choice != "all" and choice != "no_links":
+                raise Cancelled()
+            if choice == "no_links":
+                scan.follow_links = False
+                skipped_links = len(scan.linked)
+                buffered = [i for i in buffered if not i[-1]]
+        total = 0 if over else scan.bytes        # 0: size unknown, progress shows the amount received
+        log.info("download: %s -> %s (%s)", ", ".join(remote_paths), local_dir,
+                 f"{scan.files} files, {total} bytes" if not over else "counting while downloading")
+        done = 0
+
+        def handle(item):
+            nonlocal done
+            if item[-1] and not scan.follow_links:
                 return
-            if stat.S_ISDIR(st.st_mode):
-                os.makedirs(lpath, exist_ok=True)
-                for a in sftp.listdir_attr(rpath):
-                    get(posixpath.join(rpath, a.filename), lpath)
-            else:
-                sftp.get(rpath, lpath, callback=w.cb(tr("Downloading: {name}", name=name), done[0], total))
-                done[0] += st.st_size or 0
-        for r in remote_paths:
-            get(r, local_dir)
+            if item[0] == "dir":
+                os.makedirs(item[1], exist_ok=True)
+                return
+            _kind, rpath, lpath, size, _via = item
+            if w.cancel:
+                raise Cancelled()
+            log.info("download: %s", rpath)
+            sftp.get(rpath, lpath, callback=w.cb(tr("Downloading: {name}", name=posixpath.basename(lpath)), done, total))
+            done += size
+
+        for item in buffered:
+            handle(item)
+        for item in it:                          # only when the limit was passed: walk on while downloading
+            handle(item)
+        for p in scan.special:
+            log.info("download: skipped (special file or folder already included): %s", p)
+        for p in scan.unsafe:
+            log.info("download: skipped (unsafe name): %s", p)
+        notes = []
+        if scan.unsafe:
+            notes.append(tr("{n} unsafe names skipped", n=len(scan.unsafe)))
+        skipped = len(scan.special) + skipped_links
         if skipped:
-            return tr("{path}  ({n} unsafe names skipped)", path=local_dir, n=len(skipped))
-        return local_dir
+            notes.append(tr("{n} special files or linked folders skipped", n=skipped))
+        return local_dir + ("  (" + ", ".join(notes) + ")" if notes else "")
     return fn
 
 
@@ -218,9 +374,10 @@ def job_upload(local_paths: list[str], remote_dir: str, skip: set | None = None)
     return fn
 
 
-def job_download_drop(remote_paths: list[str], local_dir: str, items, marker: bytes):
+def job_download_drop(remote_paths: list[str], local_dir: str, items, marker: bytes,
+                      limits: tuple[int, int] | None = None):
     """Drag-out download: downloaded files overwrite the placeholders; placeholders are cleaned up on failure/cancel."""
-    inner = job_download(remote_paths, local_dir)
+    inner = job_download(remote_paths, local_dir, limits)
 
     def fn(sftp, w):
         try:
@@ -254,7 +411,13 @@ def job_put_file(local_path: str, remote_path: str):
 
 def job_get_file(remote_path: str, local_path: str):
     def fn(sftp, w):
-        size = sftp.stat(remote_path).st_size or 0
+        st = sftp.stat(remote_path)
+        if not stat.S_ISREG(st.st_mode or stat.S_IFREG):
+            # FIFOs, sockets and devices: opening one would block the server's SFTP process
+            raise IOError(tr("{name} is not a regular file, so it was not opened",
+                             name=posixpath.basename(remote_path)))
+        size = st.st_size or 0
+        log.info("open: %s", remote_path)
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         sftp.get(remote_path, local_path, callback=w.cb(tr("Downloading: {name}", name=posixpath.basename(remote_path)), 0, size))
         return local_path, remote_path
@@ -632,6 +795,8 @@ class SftpExplorer(QWidget):
         self.transfer.result.connect(self._on_result)
         self.transfer.error.connect(self._on_error)
         self.transfer.progress.connect(self._on_progress)
+        self.transfer.note.connect(self._on_note)
+        self.transfer.ask.connect(self._on_ask)
         self.transfer.start()
         self.browse.submit("home", job_simple(lambda s: s.normalize(".")))
         self.navigate(start_dir or ".", origin="user" if start_dir else "init")
@@ -802,10 +967,41 @@ class SftpExplorer(QWidget):
     def _on_progress(self, label: str, done: int, total: int):
         self.bar.show()
         self.cancel_btn.show()
+        if total <= 0 and done > 0:          # size not known yet (large download counted on the way)
+            self.bar.setMaximum(0)
+            self.info.setText(tr("{label}  ({done} received)", label=label, done=human_size(done)))
+            return
         self.bar.setMaximum(max(1, total // 1024))
         self.bar.setValue(done // 1024)
         pct = (done * 100 // total) if total else 100
         self.info.setText(f"{label}  {pct}%  ({human_size(done)} / {human_size(total)})")
+
+    def _on_ask(self, req: dict):
+        info = req["info"]
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle(tr("Large download"))
+        box.setText(tr("This download is at least {size} in {n} files.", size=human_size(info["bytes"]),
+                       n=f"{info['files']:,}"))
+        detail = tr("Counting stopped once it passed the limit set in Settings.")
+        linked = info.get("linked") or []
+        if linked:
+            names = ", ".join(linked[:5]) + (" …" if len(linked) > 5 else "")
+            detail += "\n\n" + tr("It includes linked folders: {names}", names=names)
+        box.setInformativeText(detail)
+        all_btn = box.addButton(tr("Download all"), QMessageBox.ButtonRole.AcceptRole)
+        skip_btn = box.addButton(tr("Skip linked folders"), QMessageBox.ButtonRole.ActionRole) if linked else None
+        cancel_btn = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cancel_btn)
+        box.exec()
+        clicked = box.clickedButton()
+        req["answer"] = "all" if clicked is all_btn else ("no_links" if skip_btn is not None and clicked is skip_btn
+                                                         else "cancel")
+        req["event"].set()
+
+    def _on_note(self, text: str):
+        self.cancel_btn.show()
+        self.info.setText(text)
 
     def _done(self, msg: str):
         self.bar.hide()
@@ -991,13 +1187,16 @@ class SftpExplorer(QWidget):
 
         def on_found(folder):
             done_locating()
+            log.info("drag-out: dropped into %s (%d items)", folder, len(remote))
             if self.transfer:
-                self.transfer.submit("download", job_download_drop(remote, folder, items, marker))
+                self.transfer.submit("download", job_download_drop(remote, folder, items, marker,
+                                                                   confirm_limits(self.settings)))
             else:
                 dragout.remove_placeholders(folder, items, marker, only_untouched=True)
 
         def on_missing():
             done_locating()
+            log.info("drag-out: drop location not found")
             self.info.setText(tr("Couldn't find the drop location — drop onto a {fm} window or the desktop", fm=paths.file_manager_name()))
         loc.found.connect(on_found)
         loc.not_found.connect(on_missing)
@@ -1012,7 +1211,7 @@ class SftpExplorer(QWidget):
         if not d:
             return
         self.settings["download_dir"] = d
-        self.transfer.submit("download", job_download(paths, d))
+        self.transfer.submit("download", job_download(paths, d, confirm_limits(self.settings)))
 
     def new_folder(self):
         if not self.browse or not self.cwd:

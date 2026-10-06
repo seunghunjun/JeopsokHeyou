@@ -20,10 +20,12 @@ from .explorer import SftpExplorer, cleanup_temp, sh_quote
 from .i18n import tr
 from .ssh import ConnectWorker, ShellReader, SshConnection
 from .terminal import TerminalWidget, pick_font
-from . import __version__, diskui, diskusage, forwarding, library, sshconfig, vault, vaultui
+from . import __version__, applog, diskui, diskusage, forwarding, library, sshconfig, vault, vaultui
 from .home import HomeTab, SnippetPicker
 from .tunnels import (TunnelManager, ask_trust_host, error_text, import_mobaxterm_tunnels,
                       jump_credentials)
+
+log = applog.get("session")
 
 # Hook the shell (bash/zsh) so the terminal reports its current folder via OSC 7 on every cd.
 # The final printf doubles as the "injection done" marker and the initial location report.
@@ -445,6 +447,7 @@ class SessionTab(QWidget):
             return
         # Last shell closed -> treat as disconnected
         self.state = "closed"
+        log.info("disconnected: %s%s", self._who(), " (idle)" if self._close_reason == "idle" else "")
         self._title()
         self.idle_banner.hide()
         if self._close_reason == "idle":
@@ -581,6 +584,7 @@ class SessionTab(QWidget):
 
     def _on_ok(self):
         self.state = "connected"
+        log.info("connected: %s", self._who())
         self.touch()
         self._title()
         # Clean up leftover panes, then start the shell in the first pane
@@ -622,7 +626,12 @@ class SessionTab(QWidget):
             r.stop()
         self.forward_runners = []
 
+    def _who(self) -> str:
+        s = self.session
+        return f"{s.title()} ({s.user + '@' if s.user else ''}{s.host}:{s.port or 22})"
+
     def _on_failed(self, msg: str):
+        log.info("connection failed: %s: %s", self._who(), msg)
         self._jump_cache.clear()     # a typed jump-host password may have been wrong
         self.state = "failed"
         self._title()
@@ -834,6 +843,7 @@ class MainWindow(QMainWindow):
     def _build_toolbar(self):
         tb = QToolBar(tr("Tools"))
         tb.setObjectName("quick")
+        self.main_toolbar = tb
         tb.setMovable(False)
         tb.setIconSize(QSize(18, 18))
 
@@ -937,6 +947,8 @@ class MainWindow(QMainWindow):
         self._act(m, tr("History"), lambda: self.show_home("history"))
 
         m = mb.addMenu(tr("&Help"))
+        self._act(m, tr("Getting started guide"), lambda: self.start_tour(from_help=True))
+        self._act(m, tr("Open app log folder"), self.open_app_log_folder)
         self._act(m, tr("About JeopsokHeyou"), self.show_about)
 
     def show_about(self):
@@ -989,7 +1001,8 @@ class MainWindow(QMainWindow):
             self.settings["terminal_reflow"] = v["terminal_reflow"]
             self.settings["terminal_scheme"] = v["terminal_scheme"]
             for key in ("log_sessions", "log_timestamps", "log_dir", "highlight_enabled", "highlight_rules",
-                        "disk_show", "disk_banner", "disk_card", "disk_warn_pct", "disk_crit_pct"):
+                        "disk_show", "disk_banner", "disk_card", "disk_warn_pct", "disk_crit_pct",
+                        "download_confirm_gb", "download_confirm_files"):
                 self.settings[key] = v[key]
             for i in range(self.tabs.count()):
                 tab = self.tabs.widget(i)
@@ -1548,6 +1561,15 @@ class MainWindow(QMainWindow):
         d = Path(self.settings.get("log_dir") or sessionlog.default_dir())
         d.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(d)))
+
+    def start_tour(self, from_help: bool = False):
+        from . import tour
+        return tour.start(self, from_help=from_help)
+
+    def open_app_log_folder(self):
+        from PySide6.QtCore import QUrl
+        from PySide6.QtGui import QDesktopServices
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(applog.log_dir())))
 
     def find_in_terminal(self):
         tab = self.current_tab()

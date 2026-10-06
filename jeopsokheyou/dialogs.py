@@ -293,6 +293,28 @@ class SettingsDialog(QDialog):
         level_row.setEnabled(self.disk_show.isChecked())
         self.disk_banner.setEnabled(self.disk_show.isChecked())
         self.disk_card.setEnabled(self.disk_show.isChecked())
+        # large downloads: ask first above this size / file count (0 = never ask)
+        from .explorer import confirm_limits
+        max_bytes, max_files = confirm_limits(settings)
+        self.dl_gb = QSpinBox()
+        self.dl_gb.setRange(0, 100000)
+        self.dl_gb.setSuffix(" GB")
+        self.dl_gb.setValue(round(max_bytes / (1 << 30)))
+        self.dl_files = QSpinBox()
+        self.dl_files.setRange(0, 10000000)
+        self.dl_files.setSingleStep(1000)
+        self.dl_files.setGroupSeparatorShown(True)
+        self.dl_files.setValue(max_files)
+        dl_row = QWidget()
+        dr = QHBoxLayout(dl_row)
+        dr.setContentsMargins(0, 0, 0, 0)
+        dr.addWidget(self.dl_gb)
+        dr.addWidget(QLabel(tr("or")))
+        dr.addWidget(self.dl_files)
+        dr.addWidget(QLabel(tr("files")))
+        dr.addStretch(1)
+        dl_row.setToolTip(tr("Folder downloads bigger than this ask before going on. 0 = never ask."))
+        form.addRow(tr("Ask before downloading over"), dl_row)
         form.addRow(tr("Disk space"), self.disk_show)
         form.addRow("", level_row)
         form.addRow("", self.disk_banner)
@@ -370,6 +392,8 @@ class SettingsDialog(QDialog):
             "disk_show": self.disk_show.isChecked(),
             "disk_banner": self.disk_banner.isChecked(),
             "disk_card": self.disk_card.isChecked(),
+            "download_confirm_gb": self.dl_gb.value(),
+            "download_confirm_files": self.dl_files.value(),
             "disk_warn_pct": self.disk_warn.value(),
             "disk_crit_pct": min(self.disk_crit.value(), self.disk_warn.value()),
             "log_sessions": self.log_all.isChecked(),
