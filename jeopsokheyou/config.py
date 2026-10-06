@@ -294,6 +294,16 @@ class SessionStore:
         self.save()
         return True
 
+    def move_group(self, name: str, parent: str) -> str | None:
+        """Move a group with its subgroups and hosts under ``parent`` ("" = top level).
+        Returns the new path, or None when it would go inside itself or the name is taken there."""
+        if not name or in_group(parent, name):
+            return None
+        new = (parent + GROUP_SEP if parent else "") + group_leaf(name)
+        if new == name:
+            return None
+        return new if self.rename_group(name, new) else None
+
     def remove_group(self, name: str) -> int:
         """Delete a group and its subgroups. Their sessions are not deleted but moved up to the parent group
         (the top level for a top-level group). Returns the number moved."""

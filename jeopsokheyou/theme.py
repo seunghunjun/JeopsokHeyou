@@ -294,6 +294,9 @@ QPushButton#Crumb:hover {{ color: {t.accent}; background: {t.hover}; }}
 QFrame#Card {{ background: {t.content}; border: 1px solid {t.sep}; border-radius: 12px; }}
 QFrame#Card:hover {{ border-color: {t.accent}; }}
 QFrame#Card[selected="true"] {{ border: 2px solid {t.accent}; }}
+QLabel#CardNote {{ color: {t.faint}; font-size: 11px; }}
+QFrame#Card[dropHover="true"] {{ border: 2px solid {t.accent}; background: {t.hover}; }}
+QPushButton#Crumb[dropHover="true"], QPushButton#TreeHead[dropHover="true"] {{ border: 2px solid {t.accent}; }}
 QLabel#CardTitle {{ font-weight: 600; }}
 QPushButton#Primary {{ background: {t.accent}; color: {t.accent_text}; border-color: {t.accent}; font-weight: 600; }}
 QPushButton#Primary:hover {{ background: {t.accent}; border-color: {t.text}; }}

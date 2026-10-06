@@ -112,27 +112,32 @@ def ago_text(when: float, now: float | None = None) -> str:
 
 
 class DiskBadge(QWidget):
-    """Small ring with the free % for a host card (the last value seen on this PC)."""
+    """Small ring + free % on the name line of a host card (the last value seen on this PC)."""
 
     def __init__(self, entry: dict, warn: float, crit: float, parent=None):
         super().__init__(parent)
         self.entry = entry
         self.free_pct = float(entry.get("free_pct", 100.0))
         self.lv = level(self.free_pct, warn, crit)
-        self.setFixedSize(34, 34)
+        self.text = f"{self.free_pct:.0f}%"
+        w = 17 + QFontMetrics(self._font()).horizontalAdvance(self.text) + 2
+        self.setFixedSize(w, 16)
         theme.manager.changed.connect(lambda _t: self.update())
         self.setToolTip(badge_tooltip(entry))
+
+    def _font(self) -> QFont:
+        f = resized(self.font(), 0.85)
+        f.setWeight(QFont.Weight.DemiBold)
+        return f
 
     def paintEvent(self, _e):
         t = theme.current()
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        paint_ring(p, 17, 17, 14, 3.0, 1 - self.free_pct / 100.0, level_color(self.lv, t), _track(t))
-        f = resized(self.font(), 0.72)
-        f.setWeight(QFont.Weight.DemiBold)
-        p.setFont(f)
-        p.setPen(level_color(self.lv, t, for_text=True) if self.lv != "ok" else QColor(t.text))
-        p.drawText(QRectF(0, 0, 34, 34), Qt.AlignmentFlag.AlignCenter, f"{self.free_pct:.0f}%")
+        paint_ring(p, 7, 8, 5.5, 2.2, 1 - self.free_pct / 100.0, level_color(self.lv, t), _track(t))
+        p.setFont(self._font())
+        p.setPen(level_color(self.lv, t, for_text=True) if self.lv != "ok" else QColor(t.muted))
+        p.drawText(QRectF(17, 0, self.width() - 17, 16), Qt.AlignmentFlag.AlignVCenter, self.text)
         p.end()
 
 

@@ -4,11 +4,12 @@
 Hosts, Keychain, Port Forwarding, Snippets, Known Hosts, History — plus Settings."""
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QDrag, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QFrame,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLayout, QLineEdit, QListWidget,
                                QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
@@ -143,18 +144,32 @@ def selected_rows(t: QTableWidget) -> list[int]:
 
 
 # ------------------------------------------------------------------ cards
+class ElideLabel(QLabel):
+    """One-line label that ends with "…" when it doesn't fit (text() keeps the full text)."""
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        r = self.contentsRect()
+        p.setPen(self.palette().color(self.foregroundRole()))
+        p.setFont(self.font())
+        p.drawText(r, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   self.fontMetrics().elidedText(self.text(), Qt.TextElideMode.ElideRight, r.width()))
+        p.end()
+
+
 class Card(QFrame):
     """A host/group card: colored icon tile, title, subtitle. Double-click opens; right-click shows a menu."""
     activated = Signal()
     clicked = Signal()
     menu_requested = Signal(QPoint)
     edit_requested = Signal()
+    drag_requested = Signal()
 
     def __init__(self, title: str, subtitle: str, icon: str, tile: str, editable: bool = True):
         super().__init__()
         self.setObjectName("Card")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFixedSize(272, 64)
+        self.setFixedSize(304, 64)
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 10, 8, 10)
         lay.setSpacing(10)
@@ -167,15 +182,23 @@ class Card(QFrame):
         lay.addWidget(tile_lb)
         text = QVBoxLayout()
         text.setSpacing(1)
-        self.title = QLabel(title)
+        self.title = ElideLabel(title)
         self.title.setObjectName("CardTitle")
-        self.subtitle = QLabel(subtitle)
+        self.subtitle = ElideLabel(subtitle)
         self.subtitle.setObjectName("Muted")
         for lb in (self.title, self.subtitle):
             lb.setMinimumWidth(10)
             lb.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
-        text.addWidget(self.title)
-        text.addWidget(self.subtitle)
+        # name line: the name, then small extras such as the disk badge (the second line keeps the full width)
+        self.title_row = QHBoxLayout()
+        self.title_row.setSpacing(6)
+        self.title_row.addWidget(self.title, 1)
+        text.addLayout(self.title_row)
+        self.sub_row = QHBoxLayout()
+        self.sub_row.setSpacing(8)
+        self.sub_row.addWidget(self.subtitle, 1)
+        text.addLayout(self.sub_row)
+        self.note = None
         lay.addLayout(text, 1)
         self.edit_btn = None
         if editable:
@@ -187,11 +210,20 @@ class Card(QFrame):
             lay.addWidget(self.edit_btn)
         self.setToolTip(f"{title}\n{subtitle}")
         self._lay = lay
+        self._press: QPoint | None = None
+
+    def set_note(self, text: str, tip: str = "") -> None:
+        """Short faint text at the end of the second line (e.g. when it was last used)."""
+        if self.note is None:
+            self.note = QLabel()
+            self.note.setObjectName("CardNote")
+            self.sub_row.addWidget(self.note, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.note.setText(text)
+        self.note.setToolTip(tip)
 
     def add_badge(self, w: QWidget) -> None:
-        """Extra widget at the right end of the card (before the edit button)."""
-        idx = self._lay.indexOf(self.edit_btn) if self.edit_btn is not None else self._lay.count()
-        self._lay.insertWidget(idx, w)
+        """Small extra at the end of the name line (the address line keeps the full width)."""
+        self.title_row.addWidget(w, 0, Qt.AlignmentFlag.AlignVCenter)
 
     def enterEvent(self, e):
         if self.edit_btn:
@@ -205,8 +237,24 @@ class Card(QFrame):
 
     def mousePressEvent(self, e):
         if e.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit()
+            self._press = e.position().toPoint()
         super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e):
+        if self._press is not None and e.buttons() & Qt.MouseButton.LeftButton and \
+                (e.position().toPoint() - self._press).manhattanLength() >= QGuiApplication.styleHints().startDragDistance():
+            self._press = None
+            self.drag_requested.emit()
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e):
+        # A click is a press and release without dragging (a drag never counts as a click)
+        if e.button() == Qt.MouseButton.LeftButton and self._press is not None:
+            self._press = None
+            if self.rect().contains(e.position().toPoint()):
+                self.clicked.emit()
+        super().mouseReleaseEvent(e)
 
     def set_selected(self, on: bool):
         self.setProperty("selected", on)
@@ -298,6 +346,140 @@ class WelcomePage(QWidget):
 
 
 # ------------------------------------------------------------------ Hosts
+def last_connections() -> dict[str, float]:
+    """session id -> time of its latest connection, from the connection history."""
+    out: dict[str, float] = {}
+    try:
+        items = library.load_history()
+    except Exception:
+        return out
+    for h in items:                                  # newest first
+        sid = h.get("session_id")
+        if sid and sid not in out:
+            try:
+                out[sid] = float(h.get("time", 0))
+            except (TypeError, ValueError):
+                continue
+    return out
+
+
+def when_text(ts: float, now: float | None = None) -> str:
+    """Short relative time for a card: "3 days ago", or a date after 30 days."""
+    now = time.time() if now is None else now
+    if now - ts < 30 * 86400:
+        from .diskui import ago_text
+        return ago_text(ts, now)
+    t, n = time.localtime(ts), time.localtime(now)
+    if t.tm_year == n.tm_year:
+        return tr("{month}/{day}", month=t.tm_mon, day=t.tm_mday)
+    return time.strftime("%Y-%m-%d", t)
+
+
+DRAG_MIME = "application/x-jeopsokheyou-hosts"
+
+
+def drag_payload(hosts: list[str], groups: list[str]) -> QMimeData:
+    m = QMimeData()
+    m.setData(DRAG_MIME, json.dumps({"hosts": hosts, "groups": groups}).encode("utf-8"))
+    return m
+
+
+def read_payload(mime) -> tuple[list[str], list[str]] | None:
+    if mime is None or not mime.hasFormat(DRAG_MIME):
+        return None
+    try:
+        d = json.loads(bytes(mime.data(DRAG_MIME)).decode("utf-8"))
+        return [str(x) for x in d.get("hosts", [])], [str(x) for x in d.get("groups", [])]
+    except (ValueError, AttributeError):
+        return None
+
+
+class HostTree(QTreeWidget):
+    """Host list on the left: drag hosts and groups onto a group (or empty space for the top level)."""
+
+    def __init__(self, page):
+        super().__init__()
+        self.page = page
+        self._drop_rect: QRect | None = None
+        self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.setDragEnabled(True)
+        self.setAcceptDrops(True)
+        self.setDropIndicatorShown(False)
+        self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
+
+    def startDrag(self, _actions):
+        hosts, groups = [], []
+        for it in self.selectedItems():
+            kind, value = it.data(0, HostsPage.TREE_ROLE)
+            if kind == "host":
+                hosts.append(value)
+            elif value:
+                groups.append(value)
+        self.page.start_drag(hosts, groups, self)
+
+    def _target(self, pos) -> tuple[QTreeWidgetItem | None, str]:
+        it = self.itemAt(pos)
+        if it is None:
+            return None, ""                          # empty space: top level
+        kind, value = it.data(0, HostsPage.TREE_ROLE)
+        if kind == "group":
+            return it, value
+        parent = it.parent()                         # onto a host: that host's group
+        return parent, (parent.data(0, HostsPage.TREE_ROLE)[1] if parent is not None else "")
+
+    def _show(self, item, ok: bool):
+        if not ok:
+            rect = None
+        elif item is None:
+            rect = self.viewport().rect().adjusted(2, 2, -2, -2)
+        else:
+            rect = self.visualItemRect(item).adjusted(1, 0, -1, 0)
+        if rect != self._drop_rect:
+            self._drop_rect = rect
+            self.viewport().update()
+
+    def dragEnterEvent(self, e):
+        if read_payload(e.mimeData()) is not None:
+            e.setDropAction(Qt.DropAction.MoveAction)
+            e.accept()
+        else:
+            e.ignore()
+
+    def dragMoveEvent(self, e):
+        item, group = self._target(e.position().toPoint())
+        ok = self.page.can_drop(read_payload(e.mimeData()), group)
+        self._show(item, ok)
+        if ok:
+            e.setDropAction(Qt.DropAction.MoveAction)
+            e.accept()
+        else:
+            e.ignore()
+
+    def dragLeaveEvent(self, e):
+        self._show(None, False)
+        super().dragLeaveEvent(e)
+
+    def dropEvent(self, e):
+        item, group = self._target(e.position().toPoint())
+        payload = read_payload(e.mimeData())
+        self._show(None, False)
+        if self.page.can_drop(payload, group):
+            e.setDropAction(Qt.DropAction.MoveAction)
+            e.accept()                               # the store moves them; the tree is redrawn
+            self.page.drop(payload, group)
+        else:
+            e.ignore()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if self._drop_rect is not None:
+            p = QPainter(self.viewport())
+            p.setRenderHint(QPainter.RenderHint.Antialiasing)
+            p.setPen(QPen(QColor(theme.current().accent), 2))
+            p.drawRoundedRect(QRectF(self._drop_rect), 6, 6)
+            p.end()
+
+
 class HostsPage(QWidget):
     def __init__(self, main):
         super().__init__()
@@ -323,6 +505,7 @@ class HostsPage(QWidget):
         self.all_hosts_btn.setObjectName("TreeHead")
         self.all_hosts_btn.setCheckable(True)
         self.all_hosts_btn.clicked.connect(lambda: QTimer.singleShot(0, lambda: self.open_group("")))
+        self.make_drop_target(self.all_hosts_btn, "")
         head.addWidget(self.all_hosts_btn, 1)
         self.tree_hide_btn = QToolButton()
         self.tree_hide_btn.setIcon(icons.line("sidebar"))
@@ -330,7 +513,7 @@ class HostsPage(QWidget):
         self.tree_hide_btn.clicked.connect(self.toggle_tree)
         head.addWidget(self.tree_hide_btn)
         tl.addLayout(head)
-        self.tree = QTreeWidget()
+        self.tree = HostTree(self)
         self.tree.setObjectName("HostTree")
         self.tree.setHeaderHidden(True)
         self.tree.setIndentation(14)
@@ -539,6 +722,9 @@ class HostsPage(QWidget):
         return out
 
     def _tree_clicked(self, it, _col=0):
+        if QGuiApplication.keyboardModifiers() & (Qt.KeyboardModifier.ControlModifier
+                                                   | Qt.KeyboardModifier.ShiftModifier):
+            return                               # picking several items to drag
         kind, value = it.data(0, self.TREE_ROLE)
         # The tree is rebuilt on refresh — act after this click finishes
         if kind == "group":
@@ -587,6 +773,8 @@ class HostsPage(QWidget):
                      editable=False)
             c.clicked.connect(lambda g=g: self.open_group(g))
             c.menu_requested.connect(lambda pos, g=g: self._group_menu(g, pos))
+            c.drag_requested.connect(lambda c=c, g=g: self.start_drag([], [g], c))
+            self.make_drop_target(c, g)
             self.groups_flow.addWidget(c)
         self.groups_label.setVisible(bool(groups))
         self.groups_box.setVisible(bool(groups))
@@ -596,6 +784,7 @@ class HostsPage(QWidget):
         if settings.get("disk_card", True) and settings.get("disk_show", True):
             from . import diskusage
             last_disk = diskusage.load_last()
+        last_used = last_connections() if settings.get("card_last_connected", True) else {}
         for s in sessions:
             sub = f"{s.user + '@' if s.user else ''}{s.host}" + (f":{s.port}" if int(s.port or 22) != 22 else "")
             if s.group and (q or not self.group):
@@ -605,8 +794,13 @@ class HostsPage(QWidget):
             c.clicked.connect(lambda s=s: self._host_clicked(s))
             c.edit_requested.connect(lambda s=s: self.edit(s))
             c.menu_requested.connect(lambda pos, s=s: self._host_menu(s, pos))
+            c.drag_requested.connect(lambda c=c, s=s: self.start_drag([s.id], [], c))
             if s.id in last_disk:
                 c.add_badge(self._disk_badge(last_disk[s.id]))
+            if s.id in last_used:
+                when = last_used[s.id]
+                c.set_note(when_text(when), tr("Last connected: {time}",
+                                               time=time.strftime("%Y-%m-%d %H:%M", time.localtime(when))))
             self.hosts_flow.addWidget(c)
             self.cards[s.id] = c
             c.set_selected(s.id == (self.editing_id or self.selected_id))
@@ -653,7 +847,77 @@ class HostsPage(QWidget):
                 b.setCursor(Qt.CursorShape.PointingHandCursor)
                 b.setProperty("path", path)
                 b.clicked.connect(lambda _=False, p=path: QTimer.singleShot(0, lambda: self.open_group(p)))
+                self.make_drop_target(b, path)
                 self.crumb_lay.addWidget(b)
+
+    # ------------------------------------------------------------ drag and drop (move hosts and groups)
+    def start_drag(self, hosts: list[str], groups: list[str], source: QWidget) -> None:
+        if not hosts and not groups:
+            return
+        drag = QDrag(source)
+        drag.setMimeData(drag_payload(hosts, groups))
+        if isinstance(source, Card):
+            pix = source.grab()
+            drag.setPixmap(pix.scaled(pix.size() * 0.85, Qt.AspectRatioMode.KeepAspectRatio,
+                                      Qt.TransformationMode.SmoothTransformation))
+            drag.setHotSpot(QPoint(24, 24))
+        drag.exec(Qt.DropAction.MoveAction)
+
+    def can_drop(self, payload, target: str) -> bool:
+        """True when dropping ``payload`` onto ``target`` would change something and is allowed."""
+        if payload is None:
+            return False
+        hosts, groups = payload
+        if any(config.in_group(target, g) for g in groups):      # into itself or its own subgroup
+            return False
+        store = self.main.store
+        return any(config.group_parent(g) != target for g in groups) or \
+            any(store.get(h) is not None and store.get(h).group != target for h in hosts)
+
+    def drop(self, payload, target: str) -> None:
+        hosts, groups = payload
+        # after the drag event returns: the move rebuilds the tree and cards
+        QTimer.singleShot(0, lambda: self.main.move_items(hosts, groups, target))
+
+    def make_drop_target(self, w: QWidget, group: str) -> None:
+        w.setAcceptDrops(True)
+        w.setProperty("dropGroup", group)
+        w.installEventFilter(self)
+
+    @staticmethod
+    def _hover(w: QWidget, on: bool) -> None:
+        if bool(w.property("dropHover")) != on:
+            w.setProperty("dropHover", on)
+            w.style().unpolish(w)
+            w.style().polish(w)
+
+    def eventFilter(self, obj, e):
+        t = e.type()
+        if t in (QEvent.Type.DragEnter, QEvent.Type.DragMove, QEvent.Type.Drop, QEvent.Type.DragLeave) \
+                and obj.property("dropGroup") is not None:
+            if t == QEvent.Type.DragLeave:
+                self._hover(obj, False)
+                return True
+            target = obj.property("dropGroup")
+            payload = read_payload(e.mimeData())
+            ok = self.can_drop(payload, target)
+            if t == QEvent.Type.Drop:
+                self._hover(obj, False)
+                if ok:
+                    e.setDropAction(Qt.DropAction.MoveAction)
+                    e.accept()
+                    self.drop(payload, target)
+                else:
+                    e.ignore()
+                return True
+            self._hover(obj, ok)
+            if ok:
+                e.setDropAction(Qt.DropAction.MoveAction)
+                e.accept()
+            else:
+                e.ignore()
+            return True
+        return super().eventFilter(obj, e)
 
     def crumb_buttons(self) -> list[QPushButton]:
         return [self.crumb_lay.itemAt(i).widget() for i in range(self.crumb_lay.count())

@@ -525,5 +525,11 @@
   "Finish with the basics": "基本だけで終了",
   "See what's different": "独自の機能を見る",
   "Desktop": "デスクトップ",
-  "Server": "サーバー"
+  "Server": "サーバー",
+  "Move group": "グループを移動",
+  "Couldn't move {names}: a group with the same name is already there.": "{names} を移動できませんでした。同じ名前のグループが既にあります。",
+  "Host cards": "ホストカード",
+  "Last connected: {time}": "最終接続: {time}",
+  "Show when each host was last connected on its card": "カードに最終接続の時期を表示",
+  "{month}/{day}": "{month}月{day}日"
 }

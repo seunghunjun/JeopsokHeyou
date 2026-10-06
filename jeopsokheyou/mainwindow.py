@@ -1002,7 +1002,7 @@ class MainWindow(QMainWindow):
             self.settings["terminal_scheme"] = v["terminal_scheme"]
             for key in ("log_sessions", "log_timestamps", "log_dir", "highlight_enabled", "highlight_rules",
                         "disk_show", "disk_banner", "disk_card", "disk_warn_pct", "disk_crit_pct",
-                        "download_confirm_gb", "download_confirm_files"):
+                        "download_confirm_gb", "download_confirm_files", "card_last_connected"):
                 self.settings[key] = v[key]
             for i in range(self.tabs.count()):
                 tab = self.tabs.widget(i)
@@ -1256,6 +1256,31 @@ class MainWindow(QMainWindow):
     def _move_sessions(self, ids: list[str], group: str):
         if ids and self.store.move_sessions(ids, group):
             self.reload_sessions()
+
+    def move_items(self, host_ids: list[str], groups: list[str], target: str) -> bool:
+        """Hosts and groups dropped onto ``target`` ("" = top level) in the Hosts screen."""
+        groups = [g for g in groups if not any(o != g and config.in_group(g, o) for o in groups)]
+        moved, failed = False, []
+        page = self.home.hosts
+        for g in groups:
+            if config.group_parent(g) == target:
+                continue
+            new = self.store.move_group(g, target)
+            if new is None:
+                failed.append(g)
+                continue
+            moved = True
+            if page.group and config.in_group(page.group, g):     # keep the open group open after the move
+                page.group = new + page.group[len(g):]
+        if host_ids and self.store.move_sessions(host_ids, target):
+            moved = True
+        if moved:
+            self.reload_sessions()
+        if failed:
+            QMessageBox.information(self, tr("Move group"),
+                                    tr("Couldn't move {names}: a group with the same name is already there.",
+                                       names=", ".join(config.group_leaf(g) for g in failed)))
+        return moved
 
     def new_session(self, group: str = ""):
         d = SessionDialog(None, self._groups(), self, sessions=self.store.sessions)

@@ -315,6 +315,9 @@ class SettingsDialog(QDialog):
         dr.addStretch(1)
         dl_row.setToolTip(tr("Folder downloads bigger than this ask before going on. 0 = never ask."))
         form.addRow(tr("Ask before downloading over"), dl_row)
+        self.card_last = QCheckBox(tr("Show when each host was last connected on its card"))
+        self.card_last.setChecked(bool(settings.get("card_last_connected", True)))
+        form.addRow(tr("Host cards"), self.card_last)
         form.addRow(tr("Disk space"), self.disk_show)
         form.addRow("", level_row)
         form.addRow("", self.disk_banner)
@@ -392,6 +395,7 @@ class SettingsDialog(QDialog):
             "disk_show": self.disk_show.isChecked(),
             "disk_banner": self.disk_banner.isChecked(),
             "disk_card": self.disk_card.isChecked(),
+            "card_last_connected": self.card_last.isChecked(),
             "download_confirm_gb": self.dl_gb.value(),
             "download_confirm_files": self.dl_files.value(),
             "disk_warn_pct": self.disk_warn.value(),
