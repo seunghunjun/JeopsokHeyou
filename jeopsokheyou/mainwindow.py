@@ -60,6 +60,7 @@ class TerminalPane(TerminalWidget):
         # Whether we are hiding the echo of commands typed by the app (hook injection, sync cd): None | "inject" | "cd"
         self._hiding: str | None = None
         self._pending_cd: str | None = None
+        self._late_cd: tuple[str, float] | None = None   # explorer move waiting for a slow shell's first prompt
         self._swallow = b""
         self._swallow_since = 0.0
         self._settle = QTimer(self)
@@ -195,14 +196,32 @@ class TerminalPane(TerminalWidget):
             return
         if self._hiding == "inject":
             self._inject_state = "done"
+            if self._pending_cd:
+                # the shell is slow to start: keep the explorer's move for its first prompt, or that prompt
+                # would pull the explorer back to the shell's starting folder
+                self._late_cd = (self._pending_cd, time.monotonic())
         self._hiding = None
         self._pending_cd = None
         data, self._swallow = self._swallow, b""
         if data:
             self.feed(data)
 
+    def _on_osc7(self, path: str) -> None:
+        late, self._late_cd = self._late_cd, None
+        if late is not None and time.monotonic() - late[1] < 30:
+            self._pending_cd = late[0]       # the explorer does not follow this report: it is moving on
+        super()._on_osc7(path)
+        if late is not None and self._pending_cd == late[0] and not self._hiding:
+            self._pending_cd = None
+            self.sync_cd(late[0])
+
     def sync_cd(self, path: str) -> str:
         """Quietly cd the terminal to the explorer location. Result: sent|queued|same|busy|typing|unsupported|offline"""
+        if self._late_cd is not None:
+            if time.monotonic() - self._late_cd[1] < 30:
+                self._late_cd = (path, self._late_cd[1])   # a newer move replaces the one still waiting
+                return "queued"
+            self._late_cd = None
         if not self.chan or self.disconnected:
             return "offline"
         if path == self.cwd:
@@ -529,8 +548,9 @@ class SessionTab(QWidget):
 
     def _pane_cwd(self, pane, path: str):
         # While the explorer's next folder is still queued for this terminal, this report is the terminal
-        # catching up with an earlier one: following it would pull the explorer back.
-        if pane is self.active and not pane._pending_cd:
+        # catching up with an earlier one: following it would pull the explorer back. The same goes for a
+        # report that arrives while the app's own cd is still on its way (its answer is read after that).
+        if pane is self.active and not pane._pending_cd and not pane._hiding:
             self.explorer.follow(path)
 
     SYNC_MSG = {

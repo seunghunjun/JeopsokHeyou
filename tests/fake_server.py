@@ -54,6 +54,7 @@ def accept_channels(t):
         threading.Thread(target=bridge, args=(c, ch), daemon=True).start()
 def shell(ch):
     cwd = "/home/tester"
+    time.sleep(float(os.environ.get('FAKE_SHELL_DELAY', '0')))   # a server slow to show its first prompt
     ch.send("Welcome to demo server\r\n$ ")
     buf = ""
     hooked = False
