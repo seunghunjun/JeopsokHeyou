@@ -96,6 +96,8 @@ try:
     # going up to / still shows everything (it used to come out empty)
     ex.navigate("/home")
     wait(lambda: ex.cwd == "/home")
+    # let the terminal finish its own cd first (a slow machine would otherwise still be on the way)
+    wait(lambda: tab.active is not None and tab.active.cwd == "/home" and not tab.active._hiding)
     ex.go_up()
     check("up to / lists the root", wait(lambda: ex.cwd == "/" and ex.item_count() >= 2), ex.item_count())
     check("... and nothing is selected at /", not ex.tree.selectedItems())

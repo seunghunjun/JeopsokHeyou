@@ -67,8 +67,12 @@ from jeopsokheyou.dialogs import ShortcutsDialog  # noqa: E402
 
 d = ShortcutsDialog(w)
 rows = dict(d.rows())
-check("dialog lists actions with this system's keys", rows.get("Split left/right", "").startswith("Alt+Shift+=")
-      and rows.get("Go to tab 1–9 (9 = last)") == "Ctrl+Alt+1–9", rows.get("Go to tab 1–9 (9 = last)"))
+# key names as this system writes them (Ctrl+Alt+1 is ⌥⌘1 when the tests run on macOS)
+check("dialog lists actions with this system's keys", rows.get("Split left/right") == shortcuts.text("split_lr")
+      and rows.get("Go to tab 1–9 (9 = last)") == shortcuts.text("tab_1"), rows.get("Go to tab 1–9 (9 = last)"))
+if sys.platform != "darwin":
+    check("... Windows Terminal keys", rows.get("Split left/right", "").startswith("Alt+Shift+=")
+          and rows.get("Go to tab 1–9 (9 = last)") == "Ctrl+Alt+1–9", rows.get("Go to tab 1–9 (9 = last)"))
 check("dialog lists terminal keys", rows.get("Copy the selection") == "Ctrl+Shift+C / Ctrl+Insert")
 d.close()
 
