@@ -49,7 +49,7 @@ LIGHT = Theme(
     name="light", dark=False,
     window="#ECECEC", toolbar="#F6F6F6", sidebar="#EDEBEF", content="#FFFFFF", alt_row="#F5F5F5",
     text="#1D1D1F", muted="#6E6E73", faint="#9A9AA0", sep="#DCDCDE", hover="rgba(0,0,0,0.055)",
-    accent="#0A64D8", accent_text="#FFFFFF", sel_inactive="#DCDCDE",
+    accent="#0A64D8", accent_text="#FFFFFF", sel_inactive="#C4DCF8",
     field="#FFFFFF", field_border="#D2D2D7", button="#FFFFFF", button_border="#D2D2D7",
     menu="#F7F7F7", icon="#5B5B60", scroll="rgba(0,0,0,0.28)",
 )
@@ -58,7 +58,7 @@ DARK = Theme(
     name="dark", dark=True,
     window="#232325", toolbar="#2B2B2D", sidebar="#262628", content="#1E1E1E", alt_row="#242426",
     text="#E8E8ED", muted="#A1A1A6", faint="#7C7C82", sep="#3A3A3C", hover="rgba(255,255,255,0.07)",
-    accent="#0A84FF", accent_text="#FFFFFF", sel_inactive="#3A3A3C",
+    accent="#0A84FF", accent_text="#FFFFFF", sel_inactive="#1F4A7A",
     field="#1C1C1E", field_border="#3F3F43", button="#3A3A3C", button_border="#48484A",
     menu="#2C2C2E", icon="#C7C7CC", scroll="rgba(255,255,255,0.30)",
 )
@@ -160,7 +160,15 @@ def _chevron_svg(color: str, open_: bool) -> str:
             f'stroke="{color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>')
 
 
+def _chevron_up_svg(color: str) -> str:
+    return ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><path d="M4.5 9.5l3.5-3.5 3.5 3.5" fill="none" '
+            f'stroke="{color}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>')
+
+
 def build_qss(t: Theme) -> str:
+    combo_arrow = _ui_asset(f"combo-down-{t.name}.svg", _chevron_svg(t.muted, True))
+    spin_up = _ui_asset(f"spin-up-{t.name}.svg", _chevron_up_svg(t.muted))
+    spin_down = _ui_asset(f"spin-down-{t.name}.svg", _chevron_svg(t.muted, True))
     chev_closed = _ui_asset(f"chev-closed-{t.name}.svg", _chevron_svg(t.muted, False))
     chev_open = _ui_asset(f"chev-open-{t.name}.svg", _chevron_svg(t.muted, True))
     close = _ui_asset(f"close-{t.name}.svg", _close_svg(t.muted))
@@ -196,7 +204,20 @@ QLineEdit, QSpinBox, QComboBox {{
     padding: 4px 8px; selection-background-color: {t.accent}; selection-color: {t.accent_text};
 }}
 QLineEdit:focus, QSpinBox:focus, QComboBox:focus {{ border: 1px solid {t.accent}; }}
-QComboBox::drop-down {{ border: none; width: 18px; }}
+QComboBox {{ padding-right: 26px; }}
+QComboBox::drop-down {{ subcontrol-origin: padding; subcontrol-position: center right; width: 24px; border: none; }}
+QComboBox::down-arrow {{ image: url({combo_arrow}); width: 14px; height: 14px; }}
+QComboBox::down-arrow:on {{ top: 1px; }}
+QSpinBox {{ padding-right: 24px; }}
+QSpinBox::up-button, QSpinBox::down-button {{ subcontrol-origin: border; width: 20px; border: none;
+    border-left: 1px solid {t.field_border}; background: transparent; }}
+QSpinBox::up-button {{ subcontrol-position: top right; border-top-right-radius: 7px; }}
+QSpinBox::down-button {{ subcontrol-position: bottom right; border-bottom-right-radius: 7px;
+    border-top: 1px solid {t.field_border}; }}
+QSpinBox::up-button:hover, QSpinBox::down-button:hover {{ background: {t.hover}; }}
+QSpinBox::up-arrow {{ image: url({spin_up}); width: 12px; height: 12px; }}
+QSpinBox::down-arrow {{ image: url({spin_down}); width: 12px; height: 12px; }}
+QSpinBox::up-arrow:disabled, QSpinBox::down-arrow:disabled {{ image: none; }}
 QComboBox QAbstractItemView {{ background: {t.menu}; border: 1px solid {t.sep}; border-radius: 6px;
     selection-background-color: {t.accent}; selection-color: {t.accent_text}; padding: 4px; }}
 QPushButton {{ background: {t.button}; border: 1px solid {t.button_border}; border-radius: 7px;
@@ -227,6 +248,8 @@ QTreeView::item:hover {{ background: {t.hover}; }}
 QTreeView::item:selected {{ background: {t.accent}; color: {t.accent_text}; }}
 QTreeView::item:selected:!active {{ background: {t.sel_inactive}; color: {t.text}; }}
 QTreeView::branch {{ background: transparent; }}
+QTreeView::branch:selected {{ background: {t.accent}; }}
+QTreeView::branch:selected:!active {{ background: {t.sel_inactive}; }}
 QTreeView::branch:has-children:closed {{ image: url({chev_closed}); }}
 QTreeView::branch:has-children:open {{ image: url({chev_open}); }}
 QHeaderView {{ background: {t.content}; border: none; }}
@@ -238,6 +261,9 @@ QHeaderView::section:last {{ border-right: none; }}
 #Sidebar, #Sidebar QTreeView {{ background: {t.sidebar}; }}
 #Sidebar QTreeView {{ show-decoration-selected: 0; padding: 2px 6px; }}
 #Sidebar QTreeView::item {{ min-height: 26px; border-radius: 6px; padding-left: 4px; }}
+#Sidebar QTreeView::item:first {{ border-top-right-radius: 0; border-bottom-right-radius: 0; }}
+#Sidebar QTreeView::item:last {{ border-top-left-radius: 0; border-bottom-left-radius: 0; padding-left: 0; }}
+#Sidebar QTreeView::item:only-one {{ border-radius: 6px; padding-left: 4px; }}
 #Sidebar QTreeView::item:selected {{ background: {t.accent}; color: {t.accent_text}; margin-top: 1px; }}
 #Sidebar QTreeView::item:selected:!active {{ background: {t.sel_inactive}; color: {t.text}; margin-top: 1px; }}
 /* margin-top: at 125-175% display scaling the rounded selection's top edge otherwise bleeds one pixel into the
@@ -265,6 +291,18 @@ QLabel#Muted {{ color: {t.muted}; }}
 #DiskBanner[level="crit"] QLabel {{ color: {"#FF9C94" if t.dark else "#9B1C14"}; font-weight: 600; }}
 #DiskBanner QPushButton {{ padding: 2px 12px; }}
 QLabel#DiskCardTitle {{ font-size: 15px; font-weight: 600; }}
+QFrame#PaneBar {{ background: {t.toolbar}; border-bottom: 1px solid {t.sep}; }}
+QFrame#PaneBar[active="true"] {{ border-bottom: 2px solid {t.accent}; }}
+QLabel#PaneTitle {{ color: {t.muted}; }}
+QLabel#PaneTitle[active="true"] {{ color: {t.text}; }}
+QLabel#PaneGrip {{ color: {t.faint}; }}
+QToolButton#PaneButton {{ padding: 0 4px; color: {t.muted}; }}
+QToolButton#PaneButton:hover {{ color: {t.text}; background: {t.hover}; }}
+QFrame#EmptyTerminal {{ background: {t.window}; border: 2px dashed transparent; }}
+QFrame#EmptyTerminal[dropHover="true"] {{ border-color: {t.accent}; }}
+QTabBar[dropHover="true"] {{ background: {t.hover}; border-bottom: 2px solid {t.accent}; }}
+QLabel#EmptyIcon {{ font-size: 40px; color: {t.faint}; }}
+QLabel#EmptyTitle {{ font-size: 16px; font-weight: 600; }}
 QFrame#TourCard {{ background: {t.menu if t.dark else t.content}; border: 1px solid {t.sep}; border-radius: 14px; }}
 QLabel#TourTitle {{ font-size: 17px; font-weight: 600; }}
 QPushButton#TourLink {{ border: none; background: transparent; color: {t.muted}; padding: 4px 2px; }}
@@ -295,6 +333,8 @@ QFrame#Card {{ background: {t.content}; border: 1px solid {t.sep}; border-radius
 QFrame#Card:hover {{ border-color: {t.accent}; }}
 QFrame#Card[selected="true"] {{ border: 2px solid {t.accent}; }}
 QLabel#CardNote {{ color: {t.faint}; font-size: 11px; }}
+QToolButton#RowEdit {{ border: none; background: transparent; border-radius: 4px; }}
+QToolButton#RowEdit:hover {{ background: {t.hover}; }}
 QFrame#Card[dropHover="true"] {{ border: 2px solid {t.accent}; background: {t.hover}; }}
 QPushButton#Crumb[dropHover="true"], QPushButton#TreeHead[dropHover="true"] {{ border: 2px solid {t.accent}; }}
 QLabel#CardTitle {{ font-weight: 600; }}

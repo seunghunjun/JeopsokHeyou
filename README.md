@@ -34,27 +34,28 @@ No account required. Free and open source (GPL-3.0).
 
 - **🧭 Getting started guide** — a short tour on first start: six basics plus three things JeopsokHeyou does differently. Close it and it continues next time; replay it from *Help → Getting started guide*.
 - **🏠 Home screen** — the start page with your recent sessions, plus a menu for Hosts, Keychain, Port Forwarding, Snippets, Known Hosts and History.
-- **🗃️ Hosts screen** — groups and hosts as a tree and as cards, a clickable path (*All hosts › Production › DB*), search, right-click menus everywhere and a side panel for editing. Each host card shows when you last connected and how much disk space the server had left. Type `user@host` in the search box to connect right away.
+- **🗃️ Hosts screen** — groups and hosts as a tree and as cards, a clickable path (*All hosts › Production › DB*), search, right-click menus everywhere and a side panel for editing. Each host card shows when you last connected and how much disk space the server had left. Type `user@host` in the search box to connect right away — it asks for the user first, offers a host you already saved, and saves a new host once you are logged in. Every host row has its own edit button.
 - **📁 Groups and subgroups** — nest groups as deep as you like; drag hosts — or whole groups with everything in them — onto a group in the host tree, a group card or the path at the top (several at once with Ctrl/Shift). Every top-level group gets its own color, or pick one with right-click → *Color*; a collapsible session list sits next to every terminal tab.
-- **🗂️ Terminal + SFTP side by side** — every connection tab shows a remote file explorer next to the shell.
+- **🗂️ Terminal + SFTP side by side** — every connection tab shows a remote file explorer next to the shell, as a folder tree that keeps the parent folders in view (or a flat list, in Settings). Double-click a folder to open or fold it in place; *Up* folds back to the parent.
 - **🔗 Two-way folder sync** — `cd` in the terminal and the explorer follows; open a folder in the explorer and the terminal quietly `cd`s there (bash/zsh). It never types into a running program or over a half-written command.
 - **🖱️ Drag & drop both ways** — drop files from Explorer or Finder to upload; drag remote files onto a folder window or the desktop to download there. Asks before overwriting a file that already exists (overwrite / skip / cancel). Background transfers with progress and cancel; resizable columns that remember their widths. Folder downloads follow folder links safely (no loops, never opening FIFOs or devices that would hang the server) and ask first when they get bigger than your limit (1 GB or 10,000 files by default).
 - **✏️ Edit remote files locally** — double-click to open in your usual app; save and JeopsokHeyou offers to upload the change (only when the content really changed). "Open with…" is built in.
-- **🪟 Tabs & split panes** — split left/right or top/bottom on the same connection, close any pane with one click. Long lines re-wrap when a pane gets wider or narrower.
+- **🪟 Tabs & split panes** — split left/right or top/bottom on the same connection, close any pane with one click. Drag a pane's title bar or a tab out of the window to give it a window of its own, and move that window back over a terminal to dock it again. Tearing off is held back over the taskbar, full-screen and administrator programs, and any program you list in Settings. Long lines re-wrap when a pane gets wider or narrower.
 - **🔀 Port forwarding** — local (`-L`), remote (`-R`) and dynamic SOCKS4/5 (`-D`) forwards, opened with a session or kept running on their own as tunnels with autostart, automatic reconnect and live connection counts.
 - **🪜 Jump hosts** — connect through one or more bastion servers (ProxyJump), for terminals and tunnels alike.
 - **🔐 Optional master password** — off by default; when on, saved passwords and key passphrases are encrypted with it (AES-256-GCM + scrypt), with a one-time recovery key and auto-lock when idle.
 - **🔑 Keychain** — see your SSH keys and saved passwords in one place, generate an ed25519 key and copy its public key.
 - **⌨️ Snippets** — save frequently used commands and paste or run them in the terminal (Ctrl+Shift+P).
-- **🔎 Find in the terminal** — search the screen and scrollback with highlighted matches (⌘F on macOS, Ctrl+Shift+G elsewhere).
+- **🔎 Find in the terminal** — search the screen and scrollback with highlighted matches (⌘F on macOS, Ctrl+Shift+F on Windows).
 - **🖍️ Keyword highlighting** — ERROR in red, WARN in yellow, SUCCESS in green, or your own words and colors.
 - **📝 Session logs** — save what a terminal shows as plain text, with time stamps, for one pane or every session.
 - **💽 Server disk space** — free space of the server's disks next to the file explorer, a card with every disk, a banner when a disk runs low (warning and critical levels are yours to set) and the last value on each host card. Read from numbers the server already keeps — no command, no scan, network shares skipped.
 - **📥 One-click import** — sessions from **PuTTY**, **Tabby**, **MobaXterm** (including MobaSSHTunnel tunnels), **SecureCRT** (folders, port forwards, jump hosts), **iTerm2** profiles and color schemes, and **OpenSSH config** (`~/.ssh/config`) files.
 - **⏱️ Idle auto-disconnect** — per session or global, with a one-minute warning; never disconnects during a transfer.
-- **🛡️ Safe by default** — host-key verification (trust on first use, block on mismatch) with a Known Hosts screen, passwords not saved unless you ask, private keys referenced by path only.
+- **🛡️ Safe by default** — host-key verification (trust on first use, block on mismatch) with a Known Hosts screen, passwords saved only with the box in the password prompt (on by default, off in Settings), private keys referenced by path only.
 - **🎨 Finder-style UI** — light and dark themes, crisp vector icons, Korean handwriting font (Gaegu) as an option.
 - **🌐 English, Korean and Japanese** — follows the system language; switch anytime in Settings.
+- **⌨️ Familiar shortcuts** — the keys of Windows Terminal on Windows and iTerm2 on macOS (⌘D to split, ⌘T for a new tab, ⌘1–9 to switch …); the full list is in *Help → Keyboard shortcuts*.
 - **🍎 Native on both platforms** — ⌘ shortcuts, Keychain and Finder on macOS; Explorer, DPAPI and a per-user installer on Windows.
 
 ## 📸 Screenshots

@@ -20,6 +20,7 @@ import threading
 import time
 from pathlib import Path
 
+import paramiko
 from PySide6.QtCore import QFileSystemWatcher, QMimeData, QSize, QThread, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QGuiApplication, QKeySequence, QPalette
 from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QHBoxLayout, QStackedLayout,
@@ -131,6 +132,33 @@ def job_list(path: str, origin: str = "user"):
     def fn(sftp, w):
         real = sftp.normalize(path)
         return real, sftp.listdir_attr(real), origin
+    return fn
+
+
+def ancestors(path: str) -> list[str]:
+    """"/a/b" -> ["/", "/a", "/a/b"]"""
+    out, cur = ["/"], ""
+    for part in [p for p in path.split("/") if p]:
+        cur += "/" + part
+        out.append(cur)
+    return out
+
+
+def job_tree(path: str, origin: str, known: set):
+    """Tree view: list the folder and every parent folder not listed yet (one readdir each, cached by the
+    caller). A parent that can't be listed (permissions, chroot) maps to None."""
+    def fn(sftp, w):
+        real = sftp.normalize(path)
+        listings = {}
+        for d in ancestors(real)[:-1]:
+            if d in known:
+                continue
+            try:
+                listings[d] = sftp.listdir_attr(d)
+            except Exception:
+                listings[d] = None
+        listings[real] = sftp.listdir_attr(real)
+        return real, listings, origin
     return fn
 
 
@@ -621,6 +649,10 @@ class SftpExplorer(QWidget):
         self._asking: set[str] = set()        # files with an upload confirmation dialog open
         self._change_timers: dict[str, QTimer] = {}
         self._locators: list = []
+        self._listings: dict[str, list] = {}      # tree view: folder -> its entries (this connection)
+        self._expanded: set[str] = set()           # tree view: folders the user opened
+        self._building = 0                         # >0 while the tree is filled in (not a user's click)
+        self._cwd_item = None
         self.disk_summary = None
         self.disk_time = 0.0
         self.disk_name = ""
@@ -684,6 +716,10 @@ class SftpExplorer(QWidget):
         self.tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.tree.customContextMenuRequested.connect(self._context_menu)
         self.tree.itemDoubleClicked.connect(self._on_double)
+        self.tree.setExpandsOnDoubleClick(False)       # double-click is handled in _on_double
+        self.tree.itemExpanded.connect(self._on_expanded)
+        self.tree.itemCollapsed.connect(self._on_collapsed)
+        self.tree.currentItemChanged.connect(self._on_current_changed)
         self.tree.files_dropped.connect(self._on_dropped)
         self.tree.drag_out.connect(self._start_drag_out)
         h = self.tree.header()
@@ -738,7 +774,10 @@ class SftpExplorer(QWidget):
         h = self.tree.header()
         others = sum(h.sectionSize(c) for c in (COL_DATE, COL_SIZE, COL_KIND, COL_PERM) if not h.isSectionHidden(c))
         self._sizing = True
-        h.resizeSection(COL_NAME, max(140, self.tree.viewport().width() - others))
+        width = max(140, self.tree.viewport().width() - others)
+        if self.tree.rootIsDecorated():       # tree view: never cut names short (scroll sideways instead)
+            width = max(width, self.tree.sizeHintForColumn(COL_NAME) + 12)
+        h.resizeSection(COL_NAME, width)
         self._sizing = False
 
     def _on_column_resized(self, _idx, _old, _new):
@@ -805,6 +844,7 @@ class SftpExplorer(QWidget):
         return bool(self.transfer and (self.transfer.busy or not self.transfer.q.empty()))
 
     def detach(self) -> None:
+        self._listings.clear()
         for w in (self.browse, self.transfer):
             if w:
                 w.cancel = True
@@ -859,16 +899,42 @@ class SftpExplorer(QWidget):
             self.forward.clear()
         self.info.setText(tr("Loading… {path}", path=path))
         self._target = path   # so comparisons use the intended destination even before the listing arrives
-        self.browse.submit("list", job_list(path, origin))
+        if origin != "refresh":
+            self._expanded.clear()   # moving somewhere: only the way to the new folder stays open
+        if self.tree_mode():
+            fresh = path if path.startswith("/") else ""
+            known = {d for d in self._listings if d != fresh}
+            self.browse.submit("list", job_tree(path, origin, known))
+        else:
+            self.browse.submit("list", job_list(path, origin))
 
     def refresh(self) -> None:
         if self.cwd:
             self.navigate(self.cwd, push=False, origin="refresh")
 
     def go_up(self) -> None:
-        if self.cwd and self.cwd != "/":
-            self._pending_select = posixpath.basename(self.cwd)
-            self.navigate(posixpath.dirname(self.cwd.rstrip("/")) or "/")
+        base = self.cwd          # in the tree view a click already made the clicked folder the current one
+        item = self._cwd_item
+        if self.tree_mode() and item is not None and base and base != "/":
+            # fold the current folder where it is and make its parent current — like double-clicking
+            # the open parent: no redraw, no scrolling; the folder we came from stays selected
+            parent_path = posixpath.dirname(base.rstrip("/")) or "/"
+            parent_item = item.parent()
+            try:
+                item.setExpanded(False)
+            except RuntimeError:
+                parent_item = None
+            if parent_item is not None or parent_path == "/":
+                self.history.append(base)
+                del self.history[:-50]
+                self.forward.clear()
+                self._set_location(parent_item, parent_path)
+                self._select_location()
+                self.navigated.emit(parent_path)
+                return
+        if base and base != "/":
+            self._pending_select = posixpath.basename(base.rstrip("/"))
+            self.navigate(posixpath.dirname(base.rstrip("/")) or "/")
 
     def go_back(self) -> None:
         if self.history:
@@ -886,10 +952,13 @@ class SftpExplorer(QWidget):
         self.back_btn.setEnabled(bool(self.history))
         self.fwd_btn.setEnabled(bool(self.forward))
 
-    def follow(self, path: str) -> None:
-        """Terminal cwd change notification (OSC 7)."""
-        if self.follow_chk.isChecked() and path and path != (self._target or self.cwd):
+    def follow(self, path: str, from_terminal: bool = True) -> None:
+        """Terminal cwd change notification (OSC 7), or another pane picked (from_terminal=False)."""
+        if not path or not self.follow_chk.isChecked():
+            return
+        if path != (self._target or self.cwd):
             self.navigate(path, origin="follow")
+
 
     # ------------------------------------------------------------ result handling
     def _on_result(self, tag: str, payload):
@@ -914,16 +983,34 @@ class SftpExplorer(QWidget):
             self.disk_updated.emit(payload)
         elif tag == "list":
             path, entries, origin = payload
-            self._fill(path, entries)
+            if origin == "refresh" and path != self.cwd:
+                return              # the location changed while this refresh was on its way: it is stale
+            if isinstance(entries, dict):
+                self._fill_tree(path, entries)
+            else:
+                self._fill(path, entries)
             if origin == "user":
                 self.navigated.emit(path)
+        elif tag == "expand":
+            path, entries, _origin = payload
+            self._listings[path] = list(entries)
+            item = self._find_item(path)
+            if item is not None:
+                self._populate(item, path)
+                if path == self.cwd:
+                    self.info.setText(tr("{n} items", n=self.item_count()))
+                if path in self._expanded and not item.isExpanded():   # opened before a refresh: open again
+                    self._building += 1
+                    item.setExpanded(True)
+                    self._building -= 1
         elif tag == "download":
             self._done(tr("Download complete → {path}", path=payload))
         elif tag == "upload_check":
             self._upload_checked(*payload)
         elif tag == "upload":
             self._done(tr("Upload complete"))
-            if payload == self.cwd:
+            self._listings.pop(payload, None)
+            if payload == self.cwd or payload in self._expanded:
                 self.refresh()
         elif tag in ("open", "open_with"):
             local, remote = payload
@@ -1013,35 +1100,239 @@ class SftpExplorer(QWidget):
         if self.transfer:
             self.transfer.cancel = True
 
-    def _fill(self, path: str, entries):
+    @staticmethod
+    def _make_item(path: str, a) -> "_Item":
+        mode = a.st_mode or 0
+        is_dir = stat.S_ISDIR(mode)
+        is_link = stat.S_ISLNK(mode)
+        kind = tr("Folder") if is_dir else (tr("Link") if is_link else icons.kind_of(a.filename)[0])
+        it = _Item([a.filename,
+                    time.strftime("%Y-%m-%d %H:%M", time.localtime(a.st_mtime or 0)),
+                    "--" if is_dir else human_size(a.st_size or 0),
+                    kind,
+                    stat.filemode(mode)])
+        owner = _owner_of(a)
+        it.setToolTip(COL_PERM, f"{stat.filemode(mode)}  ({oct(stat.S_IMODE(mode))[2:]:0>3})"
+                                + ("\n" + tr("Owner: {owner}", owner=owner) if owner else ""))
+        it.setIcon(COL_NAME, icons.folder(is_link) if is_dir else icons.file(a.filename, is_link))
+        it.setData(0, Qt.ItemDataRole.UserRole, posixpath.join(path, a.filename))
+        it.setData(0, Qt.ItemDataRole.UserRole + 1, is_dir)
+        it.setData(0, Qt.ItemDataRole.UserRole + 2, is_link)
+        it.setData(COL_SIZE, Qt.ItemDataRole.UserRole, a.st_size or 0)
+        it.setData(COL_DATE, Qt.ItemDataRole.UserRole, a.st_mtime or 0)
+        it.setTextAlignment(COL_SIZE, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        return it
+
+    # ------------------------------------------------------------ tree view (folders shown in place, parents visible)
+    def tree_mode(self) -> bool:
+        return bool(self.settings.get("explorer_tree", True))
+
+    def item_count(self) -> int:
+        """Entries in the current folder (both views)."""
+        if self._cwd_item is not None:
+            try:
+                return self._cwd_item.childCount()
+            except RuntimeError:
+                self._cwd_item = None
+        return self.tree.topLevelItemCount()
+
+    def _find_item(self, path: str):
+        def walk(parent):
+            for i in range(parent.childCount()):
+                it = parent.child(i)
+                if it.data(0, Qt.ItemDataRole.UserRole) == path:
+                    return it
+                if it.data(0, Qt.ItemDataRole.UserRole + 1) and path.startswith(
+                        (it.data(0, Qt.ItemDataRole.UserRole) or "") + "/"):
+                    found = walk(it)
+                    if found is not None:
+                        return found
+            return None
+        return walk(self.tree.invisibleRootItem())
+
+    def _add_children(self, parent, path: str, entries, chain: list[str]):
+        self._building += 1
+        try:
+            self._add_children_now(parent, path, entries, chain)
+        finally:
+            self._building -= 1
+
+    def _add_children_now(self, parent, path: str, entries, chain: list[str]):
+        """Items for ``entries`` of ``path`` under ``parent``; folders on ``chain`` (the way to the current
+        folder) and folders the user opened are filled in, other folders get a lazy placeholder."""
+        for a in entries:
+            if a.filename in (".", ".."):
+                continue
+            it = self._make_item(path, a)
+            parent.addChild(it)
+            child = it.data(0, Qt.ItemDataRole.UserRole)
+            if not it.data(0, Qt.ItemDataRole.UserRole + 1):
+                continue
+            if child in chain or child in self._expanded:
+                listing = self._listing_for(child, chain)
+                if listing is not None:
+                    self._add_children_now(it, child, listing, chain)
+                    it.setExpanded(True)
+                    continue
+            it.addChild(QTreeWidgetItem([tr("Loading…")]))      # shows the arrow; filled when opened
+
+    def _listing_for(self, path: str, chain: list[str]):
+        if path in self._listings:
+            return self._listings[path]
+        if path in chain:                                       # a parent we couldn't list: show the way down only
+            nxt = chain[chain.index(path) + 1] if chain.index(path) + 1 < len(chain) else None
+            if nxt is None:
+                return []
+            a = paramiko.SFTPAttributes()
+            a.filename = posixpath.basename(nxt)
+            a.st_mode = stat.S_IFDIR | 0o755
+            return [a]
+        return None
+
+    def _populate(self, item, path: str):
+        item.takeChildren()
+        self.tree.setSortingEnabled(False)
+        self._add_children(item, path, self._listings.get(path, []), ancestors(self.cwd))
+        self.tree.setSortingEnabled(True)
+        self._fit_name_column()
+
+    def _on_expanded(self, item):
+        if not self.tree_mode():
+            return
+        path = item.data(0, Qt.ItemDataRole.UserRole)
+        if not path:
+            return
+        if not self._building:
+            self._expanded.add(path)
+        if item.childCount() == 1 and item.child(0).data(0, Qt.ItemDataRole.UserRole) is None:
+            if path in self._listings:
+                self._populate(item, path)
+            elif self.browse:
+                self.browse.submit("expand", job_list(path, "expand"))   # one readdir, only when opened
+
+    def _set_location(self, item, path: str) -> None:
+        """Make ``path`` (shown by ``item``, None for /) the current folder without redrawing the tree."""
+        old = self._cwd_item
+        if old is not None and old is not item:
+            try:
+                f = old.font(COL_NAME)
+                f.setBold(False)
+                old.setFont(COL_NAME, f)
+            except RuntimeError:
+                pass
+        self.cwd = self._target = path
+        self._cwd_item = item
+        if item is not None:
+            f = item.font(COL_NAME)
+            f.setBold(True)
+            item.setFont(COL_NAME, f)
+        self.path_edit.setText(path)
+        if path in self._listings or item is None:
+            self.info.setText(tr("{n} items", n=self.item_count()))
+        self._update_nav_buttons()
+
+    def _select_location(self, scroll_top: bool = False) -> None:
+        """The blue selection follows the current (bold) folder; nothing is selected at /."""
+        self._building += 1
+        try:
+            if self._cwd_item is not None:
+                self.tree.setCurrentItem(self._cwd_item)
+                self.tree.scrollToItem(self._cwd_item, QAbstractItemView.ScrollHint.PositionAtTop if scroll_top
+                                       else QAbstractItemView.ScrollHint.EnsureVisible)
+            else:
+                self.tree.clearSelection()
+                self.tree.setCurrentItem(None)
+        finally:
+            self._building -= 1
+
+    def _on_current_changed(self, item, _previous):
+        """Tree view: clicking a folder (or a file) makes that folder the current location — path bar,
+        Up, uploads. The terminal only follows on double-click."""
+        if not self.tree_mode() or self._building or item is None:
+            return
+        path = item.data(0, Qt.ItemDataRole.UserRole)
+        if not path:
+            return
+        if item.data(0, Qt.ItemDataRole.UserRole + 1):
+            folder, folder_item = path, item
+        else:
+            folder, folder_item = (posixpath.dirname(path) or "/"), item.parent()
+        if folder != self.cwd:
+            self._set_location(folder_item, folder)
+
+    def _enter_in_place(self, item, path: str) -> None:
+        """Tree view double-click: open the folder where it is (no redraw, no scrolling) and make it the
+        current folder (path bar, terminal sync, Back)."""
+        if self.cwd and self.cwd != path:
+            self.history.append(self.cwd)
+            del self.history[:-50]
+            self.forward.clear()
+        self._set_location(item, path)
+        item.setExpanded(True)                 # loads it (one listing) if it isn't yet
+        self.navigated.emit(path)
+
+    def _on_collapsed(self, item):
+        self._expanded.discard(item.data(0, Qt.ItemDataRole.UserRole) or "")
+
+    def _fill_tree(self, path: str, listings: dict):
+        for d, entries in listings.items():
+            if entries is None:
+                self._listings.pop(d, None)
+            else:
+                self._listings[d] = list(entries)
+        # a refresh re-reads the open folders below the current one when they are shown again
+        below = path.rstrip("/") + "/"
+        for d in [d for d in self._listings if d != path and d.startswith(below)]:
+            del self._listings[d]
         self.cwd = path
         self.path_edit.setText(path)
+        chain = ancestors(path)
+        self.tree.setUpdatesEnabled(False)
         self.tree.setSortingEnabled(False)
+        self.tree.clear()
+        self.tree.setRootIsDecorated(True)
+        self.tree.setIndentation(14)
+        root_entries = self._listing_for("/", chain) or []
+        self._add_children(self.tree.invisibleRootItem(), "/", root_entries, chain)
+        self.tree.setSortingEnabled(True)
+        self._cwd_item = None if path == "/" else self._find_item(path)
+        if self._cwd_item is not None:
+            f = self._cwd_item.font(COL_NAME)
+            f.setBold(True)
+            self._cwd_item.setFont(COL_NAME, f)
+            self._building += 1
+            self._cwd_item.setExpanded(True)
+            self._building -= 1
+        parent = self._cwd_item if self._cwd_item is not None else self.tree.invisibleRootItem()
+        select = None
+        for i in range(parent.childCount()):
+            if parent.child(i).text(COL_NAME) == self._pending_select:
+                select = parent.child(i)
+        self._pending_select = None
+        self.tree.setUpdatesEnabled(True)
+        for d in list(self._expanded):                          # opened folders that need a fresh listing
+            it = self._find_item(d)
+            if it is not None and d not in self._listings and self.browse:
+                self.browse.submit("expand", job_list(d, "expand"))
+        self._select_location(scroll_top=select is None)
+        if select is not None:
+            self.tree.scrollToItem(select)          # keep the folder we came from in view
+        self.info.setText(tr("{n} items", n=self.item_count()))
+        self._update_nav_buttons()
+        self._fit_name_column()
+
+    def _fill(self, path: str, entries):
+        self.cwd = path
+        self._cwd_item = None
+        self.path_edit.setText(path)
+        self.tree.setSortingEnabled(False)
+        self.tree.setRootIsDecorated(False)
         self.tree.clear()
         select = None
         for a in entries:
             if a.filename in (".", ".."):
                 continue
-            mode = a.st_mode or 0
-            is_dir = stat.S_ISDIR(mode)
-            is_link = stat.S_ISLNK(mode)
-            kind = tr("Folder") if is_dir else (tr("Link") if is_link else icons.kind_of(a.filename)[0])
-            it = _Item([a.filename,
-                        time.strftime("%Y-%m-%d %H:%M", time.localtime(a.st_mtime or 0)),
-                        "--" if is_dir else human_size(a.st_size or 0),
-                        kind,
-                        stat.filemode(mode)])
-            owner = _owner_of(a)
-            it.setToolTip(COL_PERM, f"{stat.filemode(mode)}  ({oct(stat.S_IMODE(mode))[2:]:0>3})"
-                                    + ("\n" + tr("Owner: {owner}", owner=owner) if owner else ""))
-            it.setIcon(COL_NAME, icons.folder(is_link) if is_dir else icons.file(a.filename, is_link))
-            it.setData(0, Qt.ItemDataRole.UserRole, posixpath.join(path, a.filename))
-            it.setData(0, Qt.ItemDataRole.UserRole + 1, is_dir)
-            it.setData(0, Qt.ItemDataRole.UserRole + 2, is_link)
-            it.setData(COL_SIZE, Qt.ItemDataRole.UserRole, a.st_size or 0)
-            it.setData(COL_DATE, Qt.ItemDataRole.UserRole, a.st_mtime or 0)
-            it.setTextAlignment(COL_SIZE, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-
+            it = self._make_item(path, a)
             self.tree.addTopLevelItem(it)
             if a.filename == self._pending_select:
                 select = it
@@ -1056,10 +1347,19 @@ class SftpExplorer(QWidget):
 
     # ------------------------------------------------------------ actions
     def _selected_paths(self) -> list[str]:
-        return [it.data(0, Qt.ItemDataRole.UserRole) for it in self.tree.selectedItems()]
+        return [it.data(0, Qt.ItemDataRole.UserRole) for it in self.tree.selectedItems()
+                if it.data(0, Qt.ItemDataRole.UserRole)]
 
     def _on_double(self, item, _col):
         path = item.data(0, Qt.ItemDataRole.UserRole)
+        if not path:
+            return                          # "Loading…" placeholder
+        if self.tree_mode() and item.data(0, Qt.ItemDataRole.UserRole + 1):
+            if item.isExpanded():
+                item.setExpanded(False)     # double-click an open folder: fold it where it is
+            else:
+                self._enter_in_place(item, path)
+            return
         if item.data(0, Qt.ItemDataRole.UserRole + 1):
             self.navigate(path)
         elif item.data(0, Qt.ItemDataRole.UserRole + 2) and self.browse:
@@ -1255,6 +1555,8 @@ class SftpExplorer(QWidget):
 
     def _context_menu(self, pos):
         it = self.tree.itemAt(pos)
+        if it is not None and not it.data(0, Qt.ItemDataRole.UserRole):
+            it = None                       # "Loading…" placeholder
         m = QMenu(self)
         if it:
             path = it.data(0, Qt.ItemDataRole.UserRole)

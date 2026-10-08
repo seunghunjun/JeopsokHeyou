@@ -6,11 +6,11 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QKeySequence
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (QApplication, QDockWidget, QFontDialog, QFrame, QHBoxLayout, QLabel, QInputDialog, QLineEdit,
                                QMainWindow, QMenu, QMessageBox, QPushButton, QSizePolicy, QSplitter,
-                               QTabWidget, QToolBar, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
+                               QToolBar, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
 
 from . import config, icons, paths, theme
@@ -20,8 +20,8 @@ from .explorer import SftpExplorer, cleanup_temp, sh_quote
 from .i18n import tr
 from .ssh import ConnectWorker, ShellReader, SshConnection
 from .terminal import TerminalWidget, pick_font
-from . import __version__, applog, diskui, diskusage, forwarding, library, sshconfig, vault, vaultui
-from .home import HomeTab, SnippetPicker
+from . import __version__, applog, detach, diskui, shortcuts, diskusage, forwarding, library, sshconfig, vault, vaultui
+from .home import HomeTab, SnippetPicker, add_edit_button
 from .tunnels import (TunnelManager, ask_trust_host, error_text, import_mobaxterm_tunnels,
                       jump_credentials)
 
@@ -60,6 +60,7 @@ class TerminalPane(TerminalWidget):
         # Whether we are hiding the echo of commands typed by the app (hook injection, sync cd): None | "inject" | "cd"
         self._hiding: str | None = None
         self._pending_cd: str | None = None
+        self._late_cd: tuple[str, float] | None = None   # explorer move waiting for a slow shell's first prompt
         self._swallow = b""
         self._swallow_since = 0.0
         self._settle = QTimer(self)
@@ -70,18 +71,12 @@ class TerminalPane(TerminalWidget):
         self._swallow_timeout.setSingleShot(True)
         self._swallow_timeout.setInterval(2000)
         self._swallow_timeout.timeout.connect(self._flush_swallow)
-        # Close button for a split pane (visible only when split)
-        self.close_btn = QToolButton(self)
-        self.close_btn.setText("✕")
-        self.close_btn.setToolTip(tr("Close this split pane (Ctrl+Shift+W)"))
-        self.close_btn.setCursor(Qt.CursorShape.ArrowCursor)
-        self.close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.close_btn.setStyleSheet(
-            "QToolButton{color:#9aa0a6;background:rgba(43,45,48,200);border:1px solid #3a3d41;"
-            "border-radius:3px;padding:0 4px;font-size:11px}"
-            "QToolButton:hover{color:#fff;background:#c42b1c;border-color:#c42b1c}")
-        self.close_btn.clicked.connect(lambda: self.close_requested.emit(self))
-        self.close_btn.hide()
+        # Title bar (drag to move, ✕ to close) lives in the frame around the pane
+        self.owner_tab = None
+        self.frame = detach.PaneFrame(self, bool(settings.get("pane_title_bar", True)))
+        self.close_btn = self.frame.bar.close_btn
+        self._drop_zone: str | None = None
+        self.setAcceptDrops(True)
 
     def start(self, conn: SshConnection) -> None:
         self.disconnected = False
@@ -201,14 +196,32 @@ class TerminalPane(TerminalWidget):
             return
         if self._hiding == "inject":
             self._inject_state = "done"
+            if self._pending_cd:
+                # the shell is slow to start: keep the explorer's move for its first prompt, or that prompt
+                # would pull the explorer back to the shell's starting folder
+                self._late_cd = (self._pending_cd, time.monotonic())
         self._hiding = None
         self._pending_cd = None
         data, self._swallow = self._swallow, b""
         if data:
             self.feed(data)
 
+    def _on_osc7(self, path: str) -> None:
+        late, self._late_cd = self._late_cd, None
+        if late is not None and time.monotonic() - late[1] < 30:
+            self._pending_cd = late[0]       # the explorer does not follow this report: it is moving on
+        super()._on_osc7(path)
+        if late is not None and self._pending_cd == late[0] and not self._hiding:
+            self._pending_cd = None
+            self.sync_cd(late[0])
+
     def sync_cd(self, path: str) -> str:
         """Quietly cd the terminal to the explorer location. Result: sent|queued|same|busy|typing|unsupported|offline"""
+        if self._late_cd is not None:
+            if time.monotonic() - self._late_cd[1] < 30:
+                self._late_cd = (path, self._late_cd[1])   # a newer move replaces the one still waiting
+                return "queued"
+            self._late_cd = None
         if not self.chan or self.disconnected:
             return "offline"
         if path == self.cwd:
@@ -246,11 +259,62 @@ class TerminalPane(TerminalWidget):
         self.focused.emit(self)
         super().focusInEvent(e)
 
-    def resizeEvent(self, e):
-        super().resizeEvent(e)
-        self.close_btn.adjustSize()
-        self.close_btn.move(self.width() - self.SB_W - self.close_btn.width() - 4, 4)
-        self.close_btn.raise_()
+
+    # -- docking a dragged pane onto this one
+    def _accepts(self, e) -> bool:
+        p = detach.dragging["pane"]
+        return (e.mimeData().hasFormat(detach.MIME_PANE) and p is not None and p is not self
+                and self.owner_tab is not None and getattr(p, "owner_tab", None) is self.owner_tab)
+
+    def dragEnterEvent(self, e):
+        if self._accepts(e):
+            e.setDropAction(Qt.DropAction.MoveAction)
+            e.accept()
+        else:
+            e.ignore()
+
+    def dragMoveEvent(self, e):
+        if not self._accepts(e):
+            e.ignore()
+            return
+        zone = detach.drop_zone(self.size(), e.position().toPoint())
+        if zone != self._drop_zone:
+            self._drop_zone = zone
+            self.update()
+        e.setDropAction(Qt.DropAction.MoveAction)
+        e.accept()
+
+    def dragLeaveEvent(self, e):
+        self._drop_zone = None
+        self.update()
+        super().dragLeaveEvent(e)
+
+    def dropEvent(self, e):
+        p, zone = detach.dragging["pane"], self._drop_zone or "right"
+        self._drop_zone = None
+        self.update()
+        if not self._accepts(e):
+            e.ignore()
+            return
+        e.setDropAction(Qt.DropAction.MoveAction)
+        e.accept()
+        QTimer.singleShot(0, lambda: self.owner_tab.dock_pane(p, self, zone))
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if self._drop_zone:
+            r = self.rect()
+            w, h = r.width() // 2, r.height() // 2
+            area = {"left": QRect(0, 0, w, r.height()), "right": QRect(w, 0, r.width() - w, r.height()),
+                    "top": QRect(0, 0, r.width(), h), "bottom": QRect(0, h, r.width(), r.height() - h)}[self._drop_zone]
+            p = QPainter(self)
+            accent = QColor(theme.current().accent)
+            fill = QColor(accent)
+            fill.setAlpha(60)
+            p.fillRect(area, fill)
+            p.setPen(QPen(accent, 2))
+            p.drawRect(area.adjusted(1, 1, -2, -2))
+            p.end()
 
 
 class SessionTab(QWidget):
@@ -271,6 +335,9 @@ class SessionTab(QWidget):
         self._close_reason = ""
         self.forward_runners: list[forwarding.ForwardRunner] = []
         self._jump_cache: dict = {}
+        self.pane_windows: list = []          # windows holding panes torn off this tab
+        self.maximized = None                 # pane filling the tab (title bar double-click)
+        self.empty_card = None                # shown when every terminal of this tab is in another window
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -322,6 +389,7 @@ class SessionTab(QWidget):
         self.explorer.disk_name = session.name
         self.explorer.disk_updated.connect(lambda _s: self.update_disk_banner())
         self.term_split = QSplitter(Qt.Orientation.Horizontal)
+        self.term_split.is_root = True
         self.split.addWidget(self.explorer)
         self.split.addWidget(self.term_split)
         self.split.setStretchFactor(0, 0)
@@ -339,35 +407,120 @@ class SessionTab(QWidget):
         pane = TerminalPane(self.main.term_font, self.main.settings, self.session)
         pane.closed.connect(self._pane_closed)
         pane.focused.connect(self._pane_focused)
-        pane.close_requested.connect(self.close_pane)
+        pane.close_requested.connect(self.close_terminal)
         pane.cwd_changed.connect(lambda path, p=pane: self._pane_cwd(p, path))
         pane.reconnect_requested.connect(self.connect)
         pane.font_zoom.connect(self.main.zoom_font)
         pane.title_changed.connect(lambda t: self.title_changed.emit(self, t))
+        pane.cwd_changed.connect(lambda _p, p=pane: self._update_bar(p))
+        pane.owner_tab = self
+        self.restore_layout()
         if orientation is not None and self.active is not None:
-            parent = self.active.parentWidget()
+            parent = self.active.frame.parentWidget()
             if isinstance(parent, QSplitter):
                 if parent.count() == 1:
                     parent.setOrientation(orientation)
-                    parent.addWidget(pane)
+                    parent.addWidget(pane.frame)
                 elif parent.orientation() == orientation:
-                    parent.insertWidget(parent.indexOf(self.active) + 1, pane)
+                    parent.insertWidget(parent.indexOf(self.active.frame) + 1, pane.frame)
                 else:
                     # Different orientation: nest a new splitter in the current pane's place
-                    idx = parent.indexOf(self.active)
+                    idx = parent.indexOf(self.active.frame)
                     sizes = parent.sizes()
                     sub = QSplitter(orientation)
                     parent.insertWidget(idx, sub)
-                    sub.addWidget(self.active)
-                    sub.addWidget(pane)
+                    sub.addWidget(self.active.frame)
+                    sub.addWidget(pane.frame)
                     parent.setSizes(sizes)
-                self._equalize(pane.parentWidget())
+                self._equalize(pane.frame.parentWidget())
         else:
-            self.term_split.addWidget(pane)
+            self._hide_empty_card()
+            self.term_split.addWidget(pane.frame)
         self.panes.append(pane)
         self.active = pane
         self._update_close_buttons()
+        self._update_bar(pane)
         return pane
+
+    # ------------------------------------------------------------ title bars, full-tab view, empty area
+    def _update_bar(self, pane):
+        cwd = pane.cwd or ""
+        pane.frame.bar.set_title(self.session.title() + (f"  ·  {cwd}" if cwd else ""))
+        win = pane.window()
+        if isinstance(win, detach.PaneWindow):
+            win.retitle()
+        for p in self.panes:
+            p.frame.bar.set_active(p is self.active)
+
+    def toggle_maximize(self, pane):
+        """Title bar double-click: this terminal fills the tab; again to bring the others back."""
+        if self.maximized is not None:
+            self.restore_layout()
+            return
+        if not self.term_split.isAncestorOf(pane.frame):
+            return
+        self.maximized = pane
+
+        def apply(w):
+            for i in range(w.count()):
+                c = w.widget(i)
+                if c is pane.frame:
+                    c.show()
+                elif isinstance(c, QSplitter):
+                    c.setVisible(c.isAncestorOf(pane.frame))
+                    apply(c)
+                else:
+                    c.hide()
+        apply(self.term_split)
+        pane.setFocus()
+
+    def restore_layout(self):
+        if self.maximized is None:
+            return
+        self.maximized = None
+
+        def apply(w):
+            for i in range(w.count()):
+                c = w.widget(i)
+                c.show()
+                if isinstance(c, QSplitter):
+                    apply(c)
+        apply(self.term_split)
+        if self.empty_card is not None and self.term_split.indexOf(self.empty_card) < 0:
+            self.empty_card.hide()
+
+    def _terminals_here(self) -> list:
+        return [p for p in self.panes if self.term_split.isAncestorOf(p)]
+
+    def _show_empty_card(self):
+        if self.empty_card is None:
+            self.empty_card = detach.EmptyTerminalCard(self)
+        if self.term_split.indexOf(self.empty_card) < 0:
+            self.term_split.addWidget(self.empty_card)
+        self.empty_card.show()
+        self._title()
+
+    def _hide_empty_card(self):
+        if self.empty_card is not None and self.term_split.indexOf(self.empty_card) >= 0:
+            self.empty_card.hide()
+            self.empty_card.setParent(None)
+            self._title()
+
+    def _sync_empty_card(self):
+        if self._terminals_here():
+            self._hide_empty_card()
+        elif self.panes:
+            self._show_empty_card()
+
+    def new_terminal_here(self):
+        self.active = None
+        pane = self._add_pane()
+        if self.state == "connected":
+            try:
+                pane.start(self.conn)
+            except Exception as e:
+                pane.write_local("\x1b[31m" + tr("Cannot open shell: {error}", error=e) + "\x1b[0m\n")
+        pane.setFocus()
 
     @staticmethod
     def _equalize(sp: QSplitter):
@@ -387,12 +540,17 @@ class SessionTab(QWidget):
 
     def _pane_focused(self, pane):
         self.active = pane
+        for p in self.panes:
+            p.frame.bar.set_active(p is pane)
         # In split view, clicking another terminal moves the explorer to that terminal's location
         if pane.cwd:
-            self.explorer.follow(pane.cwd)
+            self.explorer.follow(pane.cwd, from_terminal=False)
 
     def _pane_cwd(self, pane, path: str):
-        if pane is self.active:
+        # While the explorer's next folder is still queued for this terminal, this report is the terminal
+        # catching up with an earlier one: following it would pull the explorer back. The same goes for a
+        # report that arrives while the app's own cd is still on its way (its answer is read after that).
+        if pane is self.active and not pane._pending_cd and not pane._hiding:
             self.explorer.follow(path)
 
     SYNC_MSG = {
@@ -409,20 +567,121 @@ class SessionTab(QWidget):
         if msg:
             self.explorer.info.setText(tr(msg))
 
-    def _remove_pane(self, pane: TerminalPane):
-        self.panes.remove(pane)
-        parent = pane.parentWidget()
-        pane.setParent(None)
-        pane.deleteLater()
-        # Clean up nested splitters left empty
-        while isinstance(parent, QSplitter) and parent is not self.term_split and parent.count() == 0:
+    # ------------------------------------------------------------ moving panes (drag the grip)
+    def _take_out(self, pane: TerminalPane) -> None:
+        """Lift a pane out of where it sits (a splitter here or in a pane window); the shell keeps running."""
+        self.restore_layout()
+        parent = pane.frame.parentWidget()
+        pane.frame.setParent(None)
+        while isinstance(parent, QSplitter) and not getattr(parent, "is_root", False) and parent.count() == 0:
             gp = parent.parentWidget()
             parent.setParent(None)
             parent.deleteLater()
             parent = gp
+        self._close_empty_windows()
+
+    def _close_empty_windows(self):
+        for win in list(self.pane_windows):
+            if win.split.count() == 0:
+                win.close_quietly()
+
+    def drag_pane(self, pane: TerminalPane) -> None:
+        detach.start_pane_drag(self, pane)
+
+    def float_pane(self, pane: TerminalPane, pos) -> None:
+        if pane.window() is not self.window() and len([p for p in self.panes if p.window() is pane.window()]) == 1:
+            pane.window().move(pos - QPoint(40, 16))          # already alone in its own window: just move it
+            return
+        size = pane.frame.size()
+        self._take_out(pane)
+        win = detach.PaneWindow(self)
+        self.pane_windows.append(win)
+        win.split.addWidget(pane.frame)
+        pane.frame.bar.hide()                                 # its window title says what it is
+        pane.frame.show()
+        win.retitle()
+        self._sync_empty_card()
+        win.resize(max(520, size.width()), max(320, size.height()))
+        win.move(pos - QPoint(40, 16))
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        self.active = pane
+        pane.setFocus()
+        self._update_close_buttons()
+
+    def dock_pane(self, pane: TerminalPane, target: TerminalPane, zone: str) -> None:
+        """Put ``pane`` on the ``zone`` side (left/right/top/bottom) of ``target``."""
+        if pane is target or pane not in self.panes or target not in self.panes:
+            return
+        self._take_out(pane)
+        sp = target.frame.parentWidget()
+        if not isinstance(sp, QSplitter):
+            return
+        orientation = Qt.Orientation.Horizontal if zone in ("left", "right") else Qt.Orientation.Vertical
+        after = zone in ("right", "bottom")
+        idx = sp.indexOf(target.frame)
+        if sp.count() == 1:
+            sp.setOrientation(orientation)
+        if sp.orientation() == orientation:
+            sp.insertWidget(idx + (1 if after else 0), pane.frame)
+            self._equalize(sp)
+        else:
+            sizes = sp.sizes()
+            sub = QSplitter(orientation)
+            sp.insertWidget(idx, sub)
+            sub.addWidget(target.frame)
+            sub.insertWidget(1 if after else 0, pane.frame)
+            sp.setSizes(sizes)
+            self._equalize(sub)
+        pane.frame.bar.setVisible(bool(self.main.settings.get("pane_title_bar", True)))
+        pane.frame.show()
+        self._close_empty_windows()
+        self._sync_empty_card()
+        self.active = pane
+        pane.setFocus()
+        self._update_close_buttons()
+
+    def dock_pane_back(self, pane: TerminalPane) -> None:
+        """A pane window was closed: its panes come back to the right of this tab's terminals."""
+        self.restore_layout()
+        self._hide_empty_card()
+        self._take_out(pane)
+        if self.term_split.count() == 1 and self.term_split.orientation() != Qt.Orientation.Horizontal:
+            self.term_split.setOrientation(Qt.Orientation.Horizontal)
+        self.term_split.addWidget(pane.frame)
+        self._equalize(self.term_split)
+        pane.frame.bar.setVisible(bool(self.main.settings.get("pane_title_bar", True)))
+        pane.frame.show()
+        self.active = pane
+        pane.setFocus()
+        self._update_close_buttons()
+
+    def _remove_pane(self, pane: TerminalPane):
+        if self.maximized is pane:
+            self.restore_layout()
+        self.panes.remove(pane)
+        parent = pane.frame.parentWidget()
+        pane.frame.setParent(None)
+        pane.frame.deleteLater()
+        # Clean up nested splitters left empty
+        while isinstance(parent, QSplitter) and not getattr(parent, "is_root", False) and parent.count() == 0:
+            gp = parent.parentWidget()
+            parent.setParent(None)
+            parent.deleteLater()
+            parent = gp
+        self._close_empty_windows()
+        self._sync_empty_card()
         self.active = self.panes[-1]
         self.active.setFocus()
         self._update_close_buttons()
+
+    def close_terminal(self, pane: TerminalPane) -> None:
+        """✕ on a title bar or closing a terminal's own window: end that shell; the last one ends the session."""
+        if pane not in self.panes:
+            return
+        if not self.close_pane(pane):
+            self.main.close_session_tab(self)
 
     def close_pane(self, pane: TerminalPane | None = None) -> bool:
         """Close one split pane. Returns False for the last pane (the caller decides whether to close the tab)."""
@@ -435,9 +694,9 @@ class SessionTab(QWidget):
         return True
 
     def _update_close_buttons(self):
-        multi = len(self.panes) > 1
         for p in self.panes:
-            p.close_btn.setVisible(multi)
+            p.close_btn.setVisible(True)
+            p.frame.bar.set_active(p is self.active)
 
     def _pane_closed(self, pane: TerminalPane):
         if pane not in self.panes:
@@ -503,25 +762,30 @@ class SessionTab(QWidget):
     # ------------------------------------------------------------ connection
     def _title(self):
         prefix = {"connecting": "⏳ ", "closed": "✕ ", "failed": "✕ "}.get(self.state, "")
+        if not prefix and self.empty_card is not None and self.term_split.indexOf(self.empty_card) >= 0:
+            prefix = "⧉ "                                  # its terminals are in other windows
         self.title_changed.emit(self, prefix + self.session.title())
 
     def connect(self):
         if self.state == "connecting":
             return
         s = self.session
+        if not s.user:                               # who first, then the password for that user
+            user, ok = QInputDialog.getText(self, tr("User"), tr("Login user for {host}:", host=s.host))
+            if not ok or not user.strip():
+                self.state = "failed"
+                self._title()
+                return
+            s.user = user.strip()
         if s.auth == "password" and not self.password:
-            pw, ok = QInputDialog.getText(self, tr("Password"), tr("Password for {target}:", target=f"{s.user}@{s.host}"),
-                                          QLineEdit.EchoMode.Password)
-            if not ok:
+            from .dialogs import ask_password_saving
+            pw = ask_password_saving(self, tr("Password for {target}:", target=f"{s.user}@{s.host}"), s,
+                                     self.main.store if self.main.store.get(s.id) else None)
+            if pw is None:
                 self.state = "failed"
                 self._title()
                 return
             self.password = pw
-        if not s.user:
-            user, ok = QInputDialog.getText(self, tr("User"), tr("Login user for {host}:", host=s.host))
-            if not ok or not user.strip():
-                return
-            s.user = user.strip()
         jumps = jump_credentials(self, self.main.store, s, self._jump_cache)
         if jumps is None:
             self.state = "failed"
@@ -585,6 +849,7 @@ class SessionTab(QWidget):
     def _on_ok(self):
         self.state = "connected"
         log.info("connected: %s", self._who())
+        self._save_new_host()
         self.touch()
         self._title()
         # Clean up leftover panes, then start the shell in the first pane
@@ -626,6 +891,22 @@ class SessionTab(QWidget):
             r.stop()
         self.forward_runners = []
 
+    def _save_new_host(self):
+        """A quick connection to a host that isn't saved yet: once the login works, keep it in Hosts
+        (with the password, encrypted, when Settings say so). No duplicate of an already saved host."""
+        s, main = self.session, self.main
+        if main.store.get(s.id) or any(m.user == s.user for m in main.saved_matches(s)):
+            return
+        try:
+            if s.auth == "password" and self.password and main.settings.get("save_passwords", True):
+                s.password = self.password
+            main.store.upsert(s)
+        except Exception as e:
+            log.warning("could not save the new host: %s", e)
+            return
+        log.info("saved new host: %s", self._who())
+        main.reload_sessions()
+
     def _who(self) -> str:
         s = self.session
         return f"{s.title()} ({s.user + '@' if s.user else ''}{s.host}:{s.port or 22})"
@@ -663,6 +944,8 @@ class SessionTab(QWidget):
             p.close_channel()
         if self.conn:
             self.conn.close()
+        for win in list(self.pane_windows):
+            win.close_quietly()
 
 
 GROUP_ROLE = Qt.ItemDataRole.UserRole + 1   # group name for group items
@@ -734,12 +1017,10 @@ class MainWindow(QMainWindow):
         self.store = SessionStore()
         self.term_font = pick_font(self.settings.get("font_family", ""), int(self.settings.get("font_size", 11)))
 
-        self.tabs = QTabWidget()
-        self.tabs.setTabsClosable(True)
-        self.tabs.setMovable(True)
-        self.tabs.setDocumentMode(True)
-        self.tabs.tabBar().setDrawBase(False)   # Remove the default base line under tabs (white line in dark mode)
+        self.tabs = detach.make_tabs(self)       # session tabs can be dragged out into their own window
+        detach.set_blocked_apps(self.settings.get("drag_block_apps", ""))
         self.tabs.tabCloseRequested.connect(self.close_tab)
+        self.tab_windows: list = []
         self.setCentralWidget(self.tabs)
 
         self._build_sessions_dock()
@@ -785,6 +1066,8 @@ class MainWindow(QMainWindow):
         self.filter.textChanged.connect(self.reload_sessions)
         self.filter.returnPressed.connect(self._connect_first_visible)
         self.session_tree = SessionTree()
+        from .home import prepare_edit_column
+        prepare_edit_column(self.session_tree)
         self.session_tree.itemDoubleClicked.connect(self._on_session_double)
         self.session_tree.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.session_tree.customContextMenuRequested.connect(self._session_menu)
@@ -855,12 +1138,14 @@ class MainWindow(QMainWindow):
             b.clicked.connect(slot)
             tb.addWidget(b)
             return b
-        self.home_btn = tool("home", tr("Home (Ctrl+Shift+H)"), lambda: self.show_home())
-        tool("plus", tr("New session (Ctrl+Shift+N)"), self.new_session)
+        def tip(label, sid):
+            return f"{tr(label)} ({shortcuts.text(sid, first_only=True)})"
+        self.home_btn = tool("home", tip("Home", "home"), lambda: self.show_home())
+        tool("plus", tip("New session", "new_session"), self.new_session)
         tb.addSeparator()
-        tool("split_h", tr("Split left/right (Ctrl+Shift+D)"), lambda: self.split(Qt.Orientation.Horizontal))
-        tool("split_v", tr("Split top/bottom (Ctrl+Shift+E)"), lambda: self.split(Qt.Orientation.Vertical))
-        tool("folder_plus", tr("Show/hide SFTP explorer (Ctrl+Shift+B)"), self.toggle_explorer)
+        tool("split_h", tip("Split left/right", "split_lr"), lambda: self.split(Qt.Orientation.Horizontal))
+        tool("split_v", tip("Split top/bottom", "split_tb"), lambda: self.split(Qt.Orientation.Vertical))
+        tool("folder_plus", tip("Show/hide SFTP explorer", "explorer"), self.toggle_explorer)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
@@ -875,8 +1160,8 @@ class MainWindow(QMainWindow):
     def _build_menu(self):
         mb = self.menuBar()
         m = mb.addMenu(tr("&File"))
-        self._act(m, tr("New session…"), self.new_session, "Ctrl+Shift+N")
-        self._act(m, tr("Quick connect"), lambda: self.quick.setFocus(), "Ctrl+Shift+Q")
+        self._act(m, tr("New session…"), self.new_session, "new_session")
+        self._act(m, tr("Quick connect"), lambda: self.quick.setFocus(), "quick_connect")
         self._act(m, tr("Import PuTTY sessions"), self.import_putty)
         self._act(m, tr("Import Tabby sessions"), self.import_tabby)
         self._act(m, tr("Import MobaXterm sessions…"), self.import_mobaxterm)
@@ -884,38 +1169,39 @@ class MainWindow(QMainWindow):
         self._act(m, tr("Import iTerm2 profiles…"), self.import_iterm)
         self._act(m, tr("Import SecureCRT sessions…"), self.import_securecrt)
         m.addSeparator()
-        self._act(m, tr("Lock saved passwords"), self.lock_vault, "Ctrl+Shift+L")
+        self._act(m, tr("Lock saved passwords"), self.lock_vault, "lock")
         self._act(m, tr("Exit"), self.close)
 
         m = mb.addMenu(tr("&Terminal"))
-        self._act(m, tr("Split horizontally (left/right)"), lambda: self.split(Qt.Orientation.Horizontal), "Ctrl+Shift+D")
-        self._act(m, tr("Split vertically (top/bottom)"), lambda: self.split(Qt.Orientation.Vertical), "Ctrl+Shift+E")
-        self._act(m, tr("Duplicate tab (new connection to the same server)"), self.duplicate_tab, "Ctrl+Shift+T")
-        self._act(m, tr("Close pane (split pane → tab)"), self.close_pane_or_tab, "Ctrl+Shift+W")
-        self._act(m, tr("Next tab"), lambda: self._cycle(1), "Ctrl+Tab")
-        self._act(m, tr("Previous tab"), lambda: self._cycle(-1), "Ctrl+Shift+Tab")
-        self._act(m, tr("Snippets…"), self.pick_snippet, "Ctrl+Shift+P")
-        # Find: ⌘F on macOS (like iTerm2); Ctrl+Shift+G elsewhere (Ctrl+F belongs to the shell, Ctrl+Shift+F is port forwarding)
-        self._act(m, tr("Find…"), self.find_in_terminal, "Ctrl+F" if paths.IS_MAC else "Ctrl+Shift+G")
+        self._act(m, tr("Split horizontally (left/right)"), lambda: self.split(Qt.Orientation.Horizontal), "split_lr")
+        self._act(m, tr("Split vertically (top/bottom)"), lambda: self.split(Qt.Orientation.Vertical), "split_tb")
+        self._act(m, tr("Duplicate tab (new connection to the same server)"), self.duplicate_tab, "duplicate_tab")
+        self._act(m, tr("Close pane (split pane → tab)"), self.close_pane_or_tab, "close_pane")
+        self._act(m, tr("Next tab"), lambda: self._cycle(1), "next_tab")
+        self._act(m, tr("Previous tab"), lambda: self._cycle(-1), "prev_tab")
+        self._act(m, tr("Snippets…"), self.pick_snippet, "snippets")
+        # Find: ⌘F on macOS (iTerm2), Ctrl+Shift+F on Windows (Windows Terminal); Ctrl+F belongs to the shell
+        self._act(m, tr("Find…"), self.find_in_terminal, "find")
         self._act(m, tr("Start/stop logging this pane"), self.toggle_log)
         self._act(m, tr("Open log folder"), self.open_log_folder)
         m.addSeparator()
-        self._act(m, tr("Copy  (Ctrl+Shift+C / drag)"), lambda: None)
-        self._act(m, tr("Paste  (Ctrl+Shift+V / right-click)"), lambda: None)
+        copy_keys, paste_keys = shortcuts.TERMINAL_KEYS[0], shortcuts.TERMINAL_KEYS[1]
+        self._act(m, tr("Copy the selection") + f"  ({shortcuts.terminal_text(*copy_keys[1:])})", lambda: None)
+        self._act(m, tr("Paste") + f"  ({shortcuts.terminal_text(*paste_keys[1:])})", lambda: None)
 
         m = mb.addMenu(tr("&View"))
-        self._act(m, tr("Home"), lambda: self.show_home(), "Ctrl+Shift+H")
-        self._act(m, tr("Show/hide SFTP explorer"), self.toggle_explorer, "Ctrl+Shift+B")
+        self._act(m, tr("Home"), lambda: self.show_home(), "home")
+        self._act(m, tr("Show/hide SFTP explorer"), self.toggle_explorer, "explorer")
         self.sessions_act = QAction(tr("Session list panel"), self)
         self.sessions_act.setCheckable(True)
         self.sessions_act.setChecked(bool(self.settings.get("show_sessions", True)))
-        self.sessions_act.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        self.sessions_act.setShortcuts(shortcuts.keys("sessions_panel"))
         self.sessions_act.triggered.connect(lambda _c=False: self.toggle_sessions_panel())
         m.addAction(self.sessions_act)
         m.addSeparator()
         self._act(m, tr("Font…"), self.choose_font)
-        self._act(m, tr("Larger text"), lambda: self.zoom_font(1), "Ctrl+Shift+=")
-        self._act(m, tr("Smaller text"), lambda: self.zoom_font(-1), "Ctrl+Shift+-")
+        self._act(m, tr("Larger text"), lambda: self.zoom_font(1), "zoom_in")
+        self._act(m, tr("Smaller text"), lambda: self.zoom_font(-1), "zoom_out")
         m.addSeparator()
         self._theme_actions = {}
         tm = m.addMenu(tr("Appearance"))
@@ -936,18 +1222,26 @@ class MainWindow(QMainWindow):
             grp2.addAction(a)
             self._font_actions[key] = a
         m.addSeparator()
-        self._act(m, tr("Settings…"), self.open_settings, "Ctrl+,")
+        self._act(m, tr("Settings…"), self.open_settings, "settings")
         self._act(m, tr("Master password…"), self.open_vault_settings)
         self._sync_appearance_menu()
 
         m = mb.addMenu(tr("T&ools"))
-        self._act(m, tr("Port forwarding…"), self.show_tunnels, "Ctrl+Shift+F")
+        self._act(m, tr("Port forwarding…"), self.show_tunnels, "port_forwarding")
         self._act(m, tr("Keychain"), lambda: self.show_home("keychain"))
         self._act(m, tr("Known Hosts"), lambda: self.show_home("known_hosts"))
         self._act(m, tr("History"), lambda: self.show_home("history"))
 
         m = mb.addMenu(tr("&Help"))
+        self._act(m, tr("Keyboard shortcuts"), self.show_shortcuts, "shortcuts")
         self._act(m, tr("Getting started guide"), lambda: self.start_tour(from_help=True))
+        # go to tab 1-9 (Ctrl+Alt+1… on Windows, ⌘1… on macOS); 9 is the last tab
+        for n in range(1, 10):
+            a = QAction(self)
+            a.setShortcuts(shortcuts.keys(f"tab_{n}"))
+            a.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
+            a.triggered.connect(lambda _c=False, n=n: self.go_to_tab(n))
+            self.addAction(a)
         self._act(m, tr("Open app log folder"), self.open_app_log_folder)
         self._act(m, tr("About JeopsokHeyou"), self.show_about)
 
@@ -983,10 +1277,8 @@ class MainWindow(QMainWindow):
                             self.settings.get("ui_font", "default"))
         self._sync_appearance_menu()
         self.reload_sessions()   # Repaint section/icon colors
-        for i in range(self.tabs.count()):
-            w = self.tabs.widget(i)
-            if isinstance(w, SessionTab):
-                w.explorer.refresh()
+        for w in self.session_tabs():
+            w.explorer.refresh()
 
     # Backward-compatible old name
     def set_theme(self, mode: str):
@@ -1002,20 +1294,22 @@ class MainWindow(QMainWindow):
             self.settings["terminal_scheme"] = v["terminal_scheme"]
             for key in ("log_sessions", "log_timestamps", "log_dir", "highlight_enabled", "highlight_rules",
                         "disk_show", "disk_banner", "disk_card", "disk_warn_pct", "disk_crit_pct",
-                        "download_confirm_gb", "download_confirm_files", "card_last_connected"):
+                        "download_confirm_gb", "download_confirm_files", "card_last_connected",
+                        "save_passwords", "explorer_tree", "pane_title_bar", "drag_block_apps"):
                 self.settings[key] = v[key]
-            for i in range(self.tabs.count()):
-                tab = self.tabs.widget(i)
-                if isinstance(tab, SessionTab):
+            for tab in self.session_tabs():
+                if True:
+                    tab.explorer.refresh()
                     if v["disk_show"] and tab.explorer.disk_summary is None:
                         tab.explorer.refresh_disk()
                     tab.explorer.apply_disk_settings()
                     tab.update_disk_banner()
             self.home.refresh_current()
             scheme = (self.settings.get("color_schemes") or {}).get(v["terminal_scheme"])
-            for i in range(self.tabs.count()):
-                tab = self.tabs.widget(i)
-                for p in getattr(tab, "panes", []):
+            detach.set_blocked_apps(v["drag_block_apps"])
+            for tab in self.session_tabs():
+                for p in tab.panes:
+                    p.frame.bar.setVisible(v["pane_title_bar"])
                     p.screen.reflow = v["terminal_reflow"]
                     p.apply_scheme(scheme)
                     p.apply_highlights(self.settings)
@@ -1073,7 +1367,8 @@ class MainWindow(QMainWindow):
         a = QAction(text, self)
         a.triggered.connect(slot)
         if shortcut:
-            a.setShortcut(QKeySequence(shortcut))
+            # an id from shortcuts.KEYS (this system's usual keys) or a literal key string
+            a.setShortcuts(shortcuts.keys(shortcut) if shortcut in shortcuts.KEYS else [QKeySequence(shortcut)])
             a.setShortcutContext(Qt.ShortcutContext.ApplicationShortcut)
         menu.addAction(a)
         return a
@@ -1125,6 +1420,7 @@ class MainWindow(QMainWindow):
                 g.insertChild(pos, it)
             else:
                 tree.addTopLevelItem(it)
+            add_edit_button(tree, it, lambda _c=False, s=s: self.edit_session(s))
         def sessions_under(name: str) -> int:
             return sum(1 for s in self.store.sessions if config.in_group(s.group, name)
                        and (not q or q in f"{s.title()} {s.host} {s.user} {s.group}".lower()))
@@ -1421,7 +1717,50 @@ class MainWindow(QMainWindow):
         s = Session.parse_quick(self.quick.text())
         if s:
             self.quick.clear()
-            self.open_session(s)
+            self.open_quick(s)
+
+    def saved_matches(self, s: Session) -> list:
+        """Saved hosts for a quick-connect target: same host and port (and user, when one was typed)."""
+        host = s.host.strip().lower()
+        return [x for x in self.store.sessions
+                if x.host.strip().lower() == host and int(x.port or 22) == int(s.port or 22)
+                and (not s.user or x.user == s.user)]
+
+    def open_quick(self, s: Session):
+        """Quick connect: when the host is already saved, offer the saved one (its user, key, password)."""
+        matches = self.saved_matches(s)
+        if matches:
+            target = f"{s.user + '@' if s.user else ''}{s.host}" + (f":{s.port}" if int(s.port or 22) != 22 else "")
+            if len(matches) == 1:
+                m = matches[0]
+                box = QMessageBox(self)
+                box.setIcon(QMessageBox.Icon.Question)
+                box.setWindowTitle(tr("Quick connect"))
+                box.setText(tr("{target} is already saved as \"{name}\".", target=target, name=m.title()))
+                box.setInformativeText(tr("Use the saved host (its user, key and saved password)?"))
+                use = box.addButton(tr("Use the saved host"), QMessageBox.ButtonRole.AcceptRole)
+                box.addButton(tr("Connect without it"), QMessageBox.ButtonRole.ActionRole)
+                cancel = box.addButton(QMessageBox.StandardButton.Cancel)
+                box.setDefaultButton(use)
+                box.exec()
+                clicked = box.clickedButton()
+                if clicked is cancel:
+                    return
+                if clicked is use:
+                    self.open_session(m)
+                    return
+            else:
+                other = tr("Connect without a saved host")
+                names = [f"{m.title()}  ({m.user + '@' if m.user else ''}{m.host})" for m in matches] + [other]
+                choice, ok = QInputDialog.getItem(self, tr("Quick connect"),
+                                                  tr("{target} is saved more than once. Connect with:", target=target),
+                                                  names, 0, False)
+                if not ok:
+                    return
+                if choice != other:
+                    self.open_session(matches[names.index(choice)])
+                    return
+        self.open_session(s)
 
     # ------------------------------------------------------------ tabs
     def open_session(self, s: Session, password: str = "", passphrase: str = ""):
@@ -1437,28 +1776,92 @@ class MainWindow(QMainWindow):
         tab.connect()
 
     def _on_tab_title(self, tab, text):
-        idx = self.tabs.indexOf(tab)
+        tabs = self.tab_widget_of(tab)
+        idx = tabs.indexOf(tab) if tabs is not None else -1
         if idx >= 0:
-            if text.startswith(("⏳", "✕")) or not text:
-                self.tabs.setTabText(idx, text or tab.session.title())
+            if text.startswith(("⏳", "✕", "⧉")) or not text:
+                tabs.setTabText(idx, text or tab.session.title())
             else:
                 # Window titles sent by the shell go to the tooltip only (the tab keeps the session name)
                 if tab.state == "connected" and text != tab.session.title():
-                    self.tabs.setTabToolTip(idx, text)
-                    self.tabs.setTabText(idx, tab.session.title())
+                    tabs.setTabToolTip(idx, text)
+                    tabs.setTabText(idx, tab.session.title())
                 else:
-                    self.tabs.setTabText(idx, text)
+                    tabs.setTabText(idx, text)
+
+    # ------------------------------------------------------------ tabs in several windows
+    @staticmethod
+    def is_session_tab(w) -> bool:
+        return isinstance(w, SessionTab)
+
+    def tab_widgets(self) -> list:
+        return [self.tabs] + [w.tabs for w in self.tab_windows]
+
+    def session_tabs(self) -> list:
+        return [tw.widget(i) for tw in self.tab_widgets() for i in range(tw.count())
+                if isinstance(tw.widget(i), SessionTab)]
+
+    def tab_widget_of(self, tab):
+        for tw in self.tab_widgets():
+            if tw.indexOf(tab) >= 0:
+                return tw
+        return None
+
+    def move_tab(self, tab, dest, index: int) -> None:
+        src = self.tab_widget_of(tab)
+        if src is None or not isinstance(tab, SessionTab):
+            return
+        i = src.indexOf(tab)
+        text, tip = src.tabText(i), src.tabToolTip(i)
+        if src is dest and i < index:
+            index -= 1
+        src.removeTab(i)
+        index = max(1 if dest is self.tabs else 0, min(index, dest.count()))   # Home stays first
+        dest.insertTab(index, tab, text)
+        dest.setTabToolTip(index, tip)
+        dest.setCurrentWidget(tab)
+        tab.show()
+        win = dest.window()
+        win.raise_()
+        win.activateWindow()
+        if tab.active is not None:
+            tab.active.setFocus()
+
+    def float_tab(self, tab, pos) -> None:
+        """Give a session tab a window of its own."""
+        win = detach.TabWindow(self)
+        self.tab_windows.append(win)
+        size = tab.size()
+        self.move_tab(tab, win.tabs, 0)
+        win.resize(max(700, size.width()), max(420, size.height() + 40))
+        win.move(pos - QPoint(60, 20))
+        win.show()
+        win.raise_()
+        win.activateWindow()
+        win._retitle()
+        if tab.active is not None:
+            tab.active.setFocus()
+
+    def close_session_tab(self, tab) -> None:
+        tabs = self.tab_widget_of(tab)
+        if tabs is None or not isinstance(tab, SessionTab):
+            return
+        tab.shutdown()
+        tabs.removeTab(tabs.indexOf(tab))
+        tab.deleteLater()
 
     def current_tab(self) -> SessionTab | None:
+        aw = QApplication.activeWindow()
+        if isinstance(aw, detach.TabWindow):
+            w = aw.current()
+            return w if isinstance(w, SessionTab) else None
+        if isinstance(aw, detach.PaneWindow):
+            return aw.tab
         w = self.tabs.currentWidget()
         return w if isinstance(w, SessionTab) else None
 
     def close_tab(self, idx: int):
-        w = self.tabs.widget(idx)
-        if isinstance(w, SessionTab):
-            w.shutdown()
-            self.tabs.removeTab(idx)
-            w.deleteLater()
+        self.close_session_tab(self.tabs.widget(idx))
 
     def close_pane_or_tab(self):
         """Close only the selected pane if split, otherwise close the tab."""
@@ -1480,11 +1883,28 @@ class MainWindow(QMainWindow):
     def toggle_explorer(self):
         show = not self.settings.get("show_explorer", True)
         self.settings["show_explorer"] = show
-        for i in range(self.tabs.count()):
-            w = self.tabs.widget(i)
-            if isinstance(w, SessionTab):
-                w.explorer.setVisible(show)
+        for w in self.session_tabs():
+            w.explorer.setVisible(show)
         config.save_settings(self.settings)
+
+    def go_to_tab(self, n: int):
+        """Tab n of the active window (9 = the last one); Home is not counted in the main window."""
+        aw = QApplication.activeWindow()
+        tabs = aw.tabs if isinstance(aw, detach.TabWindow) else self.tabs
+        first = 1 if tabs is self.tabs else 0
+        count = tabs.count() - first
+        if count <= 0:
+            return
+        idx = first + (count - 1 if n == 9 else n - 1)
+        if idx < tabs.count():
+            tabs.setCurrentIndex(idx)
+            t = tabs.currentWidget()
+            if isinstance(t, SessionTab) and t.active:
+                t.active.setFocus()
+
+    def show_shortcuts(self):
+        from .dialogs import ShortcutsDialog
+        ShortcutsDialog(self).exec()
 
     def _cycle(self, d):
         n = self.tabs.count()
@@ -1499,11 +1919,9 @@ class MainWindow(QMainWindow):
         self.settings["font_family"] = self.term_font.family()
         self.settings["font_size"] = self.term_font.pointSize()
         config.save_settings(self.settings)
-        for i in range(self.tabs.count()):
-            w = self.tabs.widget(i)
-            if isinstance(w, SessionTab):
-                for p in w.panes:
-                    p.set_font(self.term_font)
+        for w in self.session_tabs():
+            for p in w.panes:
+                p.set_font(self.term_font)
 
     def zoom_font(self, d: int):
         size = max(6, min(40, self.term_font.pointSize() + d))
@@ -1560,7 +1978,7 @@ class MainWindow(QMainWindow):
 
     def _snippet_target(self) -> "SessionTab | None":
         t = self.current_tab()
-        if t is None and self.last_session_tab is not None and self.tabs.indexOf(self.last_session_tab) >= 0:
+        if t is None and self.last_session_tab is not None and self.tab_widget_of(self.last_session_tab) is not None:
             t = self.last_session_tab
         return t
 
@@ -1570,7 +1988,9 @@ class MainWindow(QMainWindow):
         if pane is None or pane.disconnected:
             QMessageBox.information(self, tr("Snippets"), tr("Open a connected terminal first."))
             return
-        self.tabs.setCurrentWidget(tab)
+        tabs = self.tab_widget_of(tab)
+        if tabs is not None:
+            tabs.setCurrentWidget(tab)
         pane.send_text(snip.text_to_send())
         pane.setFocus()
 
@@ -1620,10 +2040,10 @@ class MainWindow(QMainWindow):
     def closeEvent(self, e):
         self.tunnels.stop_all()
         config.save_settings(self.settings)
-        for i in range(self.tabs.count()):
-            w = self.tabs.widget(i)
-            if isinstance(w, SessionTab):
-                w.shutdown()
+        for w in self.session_tabs():
+            w.shutdown()
+        for win in list(self.tab_windows):
+            win.close_quietly()
         super().closeEvent(e)
 
 

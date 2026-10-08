@@ -390,6 +390,30 @@ def when_text(ts: float, now: float | None = None) -> str:
     return time.strftime("%Y-%m-%d", t)
 
 
+def prepare_edit_column(tree: QTreeWidget) -> None:
+    """A narrow second column on a host/session tree for each row's edit (pencil) button."""
+    tree.setColumnCount(2)
+    h = tree.header()
+    h.setStretchLastSection(False)
+    h.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+    h.setSectionResizeMode(1, QHeaderView.ResizeMode.Fixed)
+    h.resizeSection(1, 26)
+
+
+def add_edit_button(tree: QTreeWidget, item: QTreeWidgetItem, on_edit) -> QToolButton:
+    b = QToolButton()
+    b.setObjectName("RowEdit")
+    b.setAutoRaise(True)
+    b.setIcon(icons.line("pencil"))
+    b.setIconSize(QSize(14, 14))
+    b.setFixedSize(22, 20)
+    b.setToolTip(tr("Edit…"))
+    b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    b.clicked.connect(on_edit)
+    tree.setItemWidget(item, 1, b)
+    return b
+
+
 DRAG_MIME = "application/x-jeopsokheyou-hosts"
 
 
@@ -521,7 +545,13 @@ class HostsPage(QWidget):
         self.all_hosts_btn.setCheckable(True)
         self.all_hosts_btn.clicked.connect(lambda: QTimer.singleShot(0, lambda: self.open_group("")))
         self.make_drop_target(self.all_hosts_btn, "")
-        head.addWidget(self.all_hosts_btn, 1)
+        self.all_hosts_btn.hide()           # the path at the top and Home › Hosts lead back to all hosts
+        self.tree_search = QLineEdit()
+        self.tree_search.setPlaceholderText(tr("Search sessions"))
+        self.tree_search.addAction(icons.line("server"), QLineEdit.ActionPosition.LeadingPosition)
+        self.tree_search.setClearButtonEnabled(True)
+        self.tree_search.textChanged.connect(lambda _t: self.refresh_tree())
+        head.addWidget(self.tree_search, 1)
         self.tree_hide_btn = QToolButton()
         self.tree_hide_btn.setIcon(icons.line("sidebar"))
         self.tree_hide_btn.setToolTip(tr("Hide the host list"))
@@ -530,6 +560,7 @@ class HostsPage(QWidget):
         tl.addLayout(head)
         self.tree = HostTree(self)
         self.tree.setObjectName("HostTree")
+        prepare_edit_column(self.tree)
         self.tree.setHeaderHidden(True)
         self.tree.setIndentation(14)
         self.tree.setExpandsOnDoubleClick(False)
@@ -696,7 +727,13 @@ class HostsPage(QWidget):
             nodes.get(config.group_parent(g), root).addChild(it)
             nodes[g] = it
         server = icons.line_selectable("server", th.accent, th.accent_text)
+        q = self.tree_search.text().strip().lower()
+        shown_groups: set[str] = set()
         for s in sorted(self.main.store.sessions, key=lambda x: x.title().lower()):
+            if q and q not in f"{s.title()} {s.host} {s.user} {s.group}".lower():
+                continue
+            if s.group:
+                shown_groups.add(s.group)
             it = QTreeWidgetItem([s.title()])
             it.setData(0, self.TREE_ROLE, ("host", s.id))
             it.setIcon(0, server)
@@ -707,9 +744,14 @@ class HostsPage(QWidget):
             else:                            # a group's own hosts right under it, before its subgroups
                 pos = sum(1 for i in range(parent.childCount()) if parent.child(i).data(0, self.TREE_ROLE)[0] == "host")
                 parent.insertChild(pos, it)
+            add_edit_button(t, it, lambda _c=False, s=s: self.edit(s))
         for key, it in nodes.items():
             if key:
-                it.setExpanded(key not in self._collapsed)
+                if q:                        # searching: only groups with matches (or a matching name), all open
+                    it.setHidden(not (any(config.in_group(g, key) for g in shown_groups) or q in key.lower()))
+                    it.setExpanded(True)
+                else:
+                    it.setExpanded(key not in self._collapsed)
         # The tree follows the open group; a host is highlighted only right after it is clicked
         if self.group and self.group in nodes:
             t.setCurrentItem(nodes[self.group])
@@ -967,7 +1009,7 @@ class HostsPage(QWidget):
             s = Session.parse_quick(q)
             if s:
                 self.search.clear()
-                self.main.open_session(s)
+                self.main.open_quick(s)
 
     # --- menus
     def _host_menu(self, s: Session, pos: QPoint):

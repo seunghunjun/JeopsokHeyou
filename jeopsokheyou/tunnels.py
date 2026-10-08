@@ -11,7 +11,7 @@ from dataclasses import asdict, dataclass, field
 from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
-                               QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit, QListWidget,
+                               QHBoxLayout, QHeaderView, QLabel, QLineEdit, QListWidget,
                                QListWidgetItem, QMenu, QMessageBox, QPushButton, QSpinBox, QTableWidget,
                                QTableWidgetItem, QVBoxLayout, QWidget)
 
@@ -193,15 +193,16 @@ def ask_trust_host(parent, hostname: str, key) -> bool:
     return False
 
 
-def ask_password(parent, s: Session, jump: bool = False) -> str | None:
-    """Saved password, or ask for it (None = cancelled). Key sessions never ask."""
+def ask_password(parent, s: Session, jump: bool = False, store: SessionStore | None = None) -> str | None:
+    """Saved password, or ask for it (None = cancelled). Key sessions never ask.
+    With ``store``, the prompt offers to save the password with the session."""
     pw = s.password
     if pw or s.auth != "password":
         return pw
+    from .dialogs import ask_password_saving
     target = f"{s.user}@{s.host}"
     label = tr("Password for jump host {target}:", target=target) if jump else tr("Password for {target}:", target=target)
-    pw, ok = QInputDialog.getText(parent, tr("Password"), label, QLineEdit.EchoMode.Password)
-    return pw if ok else None
+    return ask_password_saving(parent, label, s, store)
 
 
 def jump_credentials(parent, store: SessionStore, s: Session, cache: dict) -> list[tuple[Session, str, str]] | None:
@@ -210,7 +211,7 @@ def jump_credentials(parent, store: SessionStore, s: Session, cache: dict) -> li
     for j in store.jump_chain(s):
         pw = cache.get(j.id)
         if pw is None:
-            pw = ask_password(parent, j, jump=True)
+            pw = ask_password(parent, j, jump=True, store=store)
             if pw is None:
                 return None
             cache[j.id] = pw

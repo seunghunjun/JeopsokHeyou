@@ -58,6 +58,8 @@ from jeopsokheyou import tour  # noqa: E402
 tables |= {st.title for st in tour.STEPS} | {st.body for st in tour.STEPS}
 from jeopsokheyou import config as _config  # noqa: E402
 tables |= {label for label, _c in _config.GROUP_COLORS}
+from jeopsokheyou import shortcuts as _shortcuts  # noqa: E402
+tables |= set(_shortcuts.LABELS)
 used |= tables
 
 for lang in ("ko", "ja"):

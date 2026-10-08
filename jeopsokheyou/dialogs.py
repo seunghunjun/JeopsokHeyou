@@ -6,7 +6,7 @@ from __future__ import annotations
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
                                QFileDialog, QFontComboBox, QFormLayout, QHBoxLayout, QLabel,
-                               QLineEdit, QMessageBox, QPushButton, QSpinBox, QWidget)
+                               QLineEdit, QMessageBox, QPushButton, QSpinBox, QVBoxLayout, QWidget)
 
 from . import paths, vault
 from .config import Session
@@ -14,6 +14,109 @@ from .i18n import tr
 
 # Labels are English source strings; translated with tr() when displayed.
 IDLE_CHOICES = ((0, "Off"), (10, "10 min"), (30, "30 min"), (60, "1 hour"), (120, "2 hours"), (240, "4 hours"))
+
+
+def save_passwords_default() -> bool:
+    """Settings: save passwords for new hosts and typed-in passwords unless the user turned it off."""
+    from . import config
+    try:
+        return bool(config.load_settings().get("save_passwords", True))
+    except Exception:
+        return True
+
+
+def save_label() -> str:
+    if vault.enabled():
+        return tr("Save password (encrypted with your master password)")
+    return tr("Save password in the macOS Keychain") if paths.IS_MAC \
+        else tr("Save password (encrypted with your Windows account)")
+
+
+class PasswordDialog(QDialog):
+    """Password prompt with "Save password" (checked by default, see Settings)."""
+
+    def __init__(self, label: str, parent=None, can_save: bool = True):
+        super().__init__(parent)
+        self.setWindowTitle(tr("Password"))
+        self.setMinimumWidth(380)
+        lay = QVBoxLayout(self)
+        lay.addWidget(QLabel(label))
+        self.password = QLineEdit()
+        self.password.setEchoMode(QLineEdit.EchoMode.Password)
+        lay.addWidget(self.password)
+        self.save = QCheckBox(save_label())
+        self.save.setChecked(can_save and save_passwords_default())
+        self.save.setVisible(can_save)
+        lay.addWidget(self.save)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        bb.accepted.connect(self.accept)
+        bb.rejected.connect(self.reject)
+        lay.addWidget(bb)
+        self.password.setFocus()
+
+
+def ask_password_saving(parent, label: str, s, store=None) -> str | None:
+    """Ask for a password; when "Save password" is on, keep it with the session (encrypted).
+    Returns the password, or None when cancelled."""
+    d = PasswordDialog(label, parent, can_save=store is not None)
+    if not d.exec():
+        return None
+    pw = d.password.text()
+    if store is not None and d.save.isChecked() and pw:
+        try:
+            s.password = pw
+            store.upsert(s)
+        except Exception:
+            pass                       # e.g. the master password is locked: just use it for this connection
+    return pw
+
+
+class ShortcutsDialog(QDialog):
+    """Help > Keyboard shortcuts: the keys of this system (Windows or macOS)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        from PySide6.QtWidgets import QHeaderView, QTreeWidget, QTreeWidgetItem
+        from . import shortcuts
+        self.setWindowTitle(tr("Keyboard shortcuts"))
+        self.resize(640, 760)
+        lay = QVBoxLayout(self)
+        intro = QLabel(tr("Shortcuts follow {app} on this system. Older JeopsokHeyou keys keep working too.",
+                          app="iTerm2" if paths.IS_MAC else "Windows Terminal"))
+        intro.setObjectName("Muted")
+        intro.setWordWrap(True)
+        lay.addWidget(intro)
+        self.tree = QTreeWidget()
+        self.tree.setHeaderLabels([tr("Action"), tr("Keys")])
+        self.tree.setRootIsDecorated(False)
+        self.tree.setSelectionMode(QTreeWidget.SelectionMode.NoSelection)
+        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        bold = QFont(self.font())
+        bold.setBold(True)
+
+        def section(title):
+            it = QTreeWidgetItem([tr(title), ""])
+            it.setFont(0, bold)
+            it.setFirstColumnSpanned(False)
+            self.tree.addTopLevelItem(it)
+
+        for title, rows in shortcuts.SECTIONS:
+            section(title)
+            for label, sid in rows:
+                self.tree.addTopLevelItem(QTreeWidgetItem(["    " + tr(label), shortcuts.text(sid)]))
+        section("Typing in the terminal")
+        for label, win, mac in shortcuts.TERMINAL_KEYS:
+            self.tree.addTopLevelItem(QTreeWidgetItem(["    " + tr(label), shortcuts.terminal_text(win, mac)]))
+        lay.addWidget(self.tree, 1)
+        bb = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        bb.rejected.connect(self.reject)
+        bb.accepted.connect(self.accept)
+        lay.addWidget(bb)
+
+    def rows(self) -> list[tuple[str, str]]:
+        return [(self.tree.topLevelItem(i).text(0).strip(), self.tree.topLevelItem(i).text(1))
+                for i in range(self.tree.topLevelItemCount())]
 
 
 class SessionDialog(QDialog):
@@ -36,6 +139,7 @@ class SessionDialog(QDialog):
         self.port = QSpinBox()
         self.port.setRange(1, 65535)
         self.port.setValue(int(s.port or 22))
+        self.port.setMaximumWidth(140)
         self.user = QLineEdit(s.user)
 
         self.auth = QComboBox()
@@ -47,12 +151,9 @@ class SessionDialog(QDialog):
         self.password = QLineEdit(s.password)
         self.password.setEchoMode(QLineEdit.EchoMode.Password)
         self.password.setPlaceholderText(tr("Leave empty to be asked when connecting"))
-        if vault.enabled():
-            self.save_pw = QCheckBox(tr("Save password (encrypted with your master password)"))
-        else:
-            self.save_pw = QCheckBox(tr("Save password in the macOS Keychain") if paths.IS_MAC
-                                     else tr("Save password (encrypted with your Windows account)"))
-        self.save_pw.setChecked(bool(s.password_enc))
+        self.save_pw = QCheckBox(save_label())
+        # a new host saves its password by default (Settings can turn that off); an existing one keeps its choice
+        self.save_pw.setChecked(bool(s.password_enc) or (session is None and save_passwords_default()))
 
         self.key_path = QLineEdit(s.key_path)
         browse = QPushButton(tr("Browse…"))
@@ -233,6 +334,15 @@ class SettingsDialog(QDialog):
         self.reflow = QCheckBox(tr("Re-wrap long lines when the terminal width changes"))
         self.reflow.setChecked(bool(settings.get("terminal_reflow", True)))
         form.addRow("", self.reflow)
+        self.pane_bar = QCheckBox(tr("Show a title bar on each terminal (drag it to move the terminal)"))
+        self.pane_bar.setChecked(bool(settings.get("pane_title_bar", True)))
+        form.addRow("", self.pane_bar)
+        self.block_apps = QLineEdit(settings.get("drag_block_apps", ""))
+        self.block_apps.setPlaceholderText("POWERPNT.EXE, chrome.exe")
+        self.block_apps.setToolTip(tr("A terminal is never torn off over these programs (exe names, comma separated). "
+                                      "The taskbar, full-screen programs and programs running as administrator "
+                                      "are always excluded."))
+        form.addRow(tr("Don't tear off over"), self.block_apps)
         # keyword highlighting
         from .highlights import DEFAULT_RULES
         self._hl_enabled = bool(settings.get("highlight_enabled", True))
@@ -308,13 +418,21 @@ class SettingsDialog(QDialog):
         dl_row = QWidget()
         dr = QHBoxLayout(dl_row)
         dr.setContentsMargins(0, 0, 0, 0)
+        dr.addWidget(QLabel(tr("Ask above")))
         dr.addWidget(self.dl_gb)
         dr.addWidget(QLabel(tr("or")))
         dr.addWidget(self.dl_files)
         dr.addWidget(QLabel(tr("files")))
         dr.addStretch(1)
         dl_row.setToolTip(tr("Folder downloads bigger than this ask before going on. 0 = never ask."))
-        form.addRow(tr("Ask before downloading over"), dl_row)
+        form.addRow(tr("Large downloads"), dl_row)
+        self.explorer_tree = QCheckBox(tr("Show folders as a tree in the file explorer"))
+        self.explorer_tree.setChecked(bool(settings.get("explorer_tree", True)))
+        form.addRow(tr("File explorer"), self.explorer_tree)
+        self.save_pw_default = QCheckBox(tr("Save passwords of new hosts and typed-in passwords"))
+        self.save_pw_default.setChecked(bool(settings.get("save_passwords", True)))
+        self.save_pw_default.setToolTip(tr("Saved encrypted on this PC. Can still be turned off for each host."))
+        form.addRow(tr("Passwords"), self.save_pw_default)
         self.card_last = QCheckBox(tr("Show when each host was last connected on its card"))
         self.card_last.setChecked(bool(settings.get("card_last_connected", True)))
         form.addRow(tr("Host cards"), self.card_last)
@@ -396,6 +514,10 @@ class SettingsDialog(QDialog):
             "disk_banner": self.disk_banner.isChecked(),
             "disk_card": self.disk_card.isChecked(),
             "card_last_connected": self.card_last.isChecked(),
+            "save_passwords": self.save_pw_default.isChecked(),
+            "explorer_tree": self.explorer_tree.isChecked(),
+            "pane_title_bar": self.pane_bar.isChecked(),
+            "drag_block_apps": self.block_apps.text().strip(),
             "download_confirm_gb": self.dl_gb.value(),
             "download_confirm_files": self.dl_files.value(),
             "disk_warn_pct": self.disk_warn.value(),

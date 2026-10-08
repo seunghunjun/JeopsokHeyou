@@ -133,7 +133,7 @@ def main() -> int:
     tab = w.current_tab()
     pane = tab.panes[0]
     pump(15, lambda: tab.state == "connected" and pane._inject_state == "done"
-         and tab.explorer.tree.topLevelItemCount() > 3)
+         and tab.explorer.item_count() > 3)
     pane.feed(b"ls --color\r\n\x1b[1;34mbackup\x1b[0m  \x1b[1;34mconf\x1b[0m  \x1b[1;34mlogs\x1b[0m  "
               b"\x1b[1;34mwebapps\x1b[0m  app.jar  application.yml  \x1b[32mdeploy.sh\x1b[0m  server.xml\r\n"
               b"tester:/home/tester$ ")
@@ -166,7 +166,7 @@ def main() -> int:
     shot(w, "split-panes.png")
 
     w.apply_appearance(mode="dark")
-    pump(8, lambda: tab.explorer.tree.topLevelItemCount() > 0)
+    pump(8, lambda: tab.explorer.item_count() > 0)
     shot(w, "main-dark.png")
 
     # Home tab in dark mode
