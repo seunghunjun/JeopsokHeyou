@@ -48,12 +48,13 @@ STEPS = [
          "Double-click a host card to connect. You can also type user@host here and press Enter.",
          target=lambda m: m.home.hosts.search, prepare=_hosts),
     Step("session", "Terminal and files move together",
-         "Each connection opens the terminal with a file explorer for the server. cd in the terminal and "
-         "the explorer follows; open a folder in the explorer and the terminal goes there too.",
+         "Each connection opens the terminal with a file explorer for the server, shown as a folder tree. "
+         "cd in the terminal and the explorer follows; open a folder in the explorer and the terminal goes there too.",
          picture="session"),
     Step("toolbar", "Tabs, splits and Home",
-         "Home brings you back here. Split the terminal left/right or top/bottom, and show or hide the "
-         "file explorer. The session list sits next to the terminal tabs.",
+         "Home brings you back here. Split the terminal left/right or top/bottom. Drag a terminal by its title bar "
+         "onto another one to dock it beside it, or out of the window to give it a window of its own — even the only "
+         "one. Double-click a title bar to let that terminal fill the tab.",
          target=lambda m: m.main_toolbar),
     Step("settings", "Make it yours",
          "Theme, fonts, language, keyword highlighting, session logs and disk space warnings are in Settings.",

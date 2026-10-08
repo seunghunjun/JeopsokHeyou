@@ -33,12 +33,12 @@ def check(name, ok, extra=""):
 w.open_session(Session(host="127.0.0.1", port=2299, user="tester", name="close"), "pw")
 tab = w.current_tab()
 wait(lambda: tab.state == "connected")
-check("single pane: close button hidden", not tab.panes[0].close_btn.isVisibleTo(tab.panes[0]))
+check("single pane: close button shown (it ends the session)", tab.panes[0].close_btn.isVisibleTo(tab.panes[0].frame))
 tab.split_pane(Qt.Orientation.Horizontal)
 tab.split_pane(Qt.Orientation.Vertical)      # nested split
 wait(lambda: all(p._inject_state == "done" for p in tab.panes), 15)
 check("3 panes", len(tab.panes) == 3)
-check("split: close buttons visible", all(p.close_btn.isVisibleTo(p) for p in tab.panes))
+check("split: close buttons visible", all(p.close_btn.isVisibleTo(p.frame) for p in tab.panes))
 
 # Close a nested pane with its ✕ button
 target = tab.panes[2]; chan = target.chan
@@ -55,7 +55,7 @@ tab.active = tab.panes[0]
 w.close_pane_or_tab()
 wait(lambda: False, 0.3)
 check("Ctrl+Shift+W -> only selected pane closed", len(tab.panes) == 1 and w.tabs.indexOf(tab) >= 0)
-check("1 pane left -> close button hidden again", not tab.panes[0].close_btn.isVisibleTo(tab.panes[0]))
+check("1 pane left -> close button still there", tab.panes[0].close_btn.isVisibleTo(tab.panes[0].frame))
 check("remaining pane accepts input", tab.panes[0].at_prompt and not tab.panes[0].disconnected)
 tab.panes[0].send_text("cd /home/tester/docs\r"); tab.panes[0]._note_user_input("\r")
 check("sync works in remaining pane", wait(lambda: tab.explorer.cwd == "/home/tester/docs"))

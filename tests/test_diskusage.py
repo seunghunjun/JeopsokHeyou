@@ -209,7 +209,7 @@ try:
     tab = w.current_tab()
     ex = tab.explorer
     check("connected", wait(lambda: tab.state == "connected"))
-    wait(lambda: ex.tree.topLevelItemCount() >= 0 and ex.cwd != "", 8)
+    wait(lambda: ex.item_count() >= 0 and ex.cwd != "", 8)
     wait(lambda: False, 0.8)
     # the fake server (like some real ones) does not support statvfs: hidden, no error shown
     check("unsupported server: capsule hidden", not ex.disk_pill.isVisible() and ex.disk_summary is None)

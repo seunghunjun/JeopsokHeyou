@@ -350,6 +350,12 @@ class TerminalWidget(QWidget):
         self.bold_font.setBold(True)
         fm = QFontMetricsF(self.term_font)
         self.cw = max(1, math.ceil(fm.horizontalAdvance("M")))
+        # Cells are whole pixels but glyphs are not (e.g. 9.375 px): stretch each letter to the cell width so
+        # a run of text stays on the grid and the cursor sits right after the last character.
+        for f in (self.term_font, self.bold_font):
+            f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0)
+            f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing,
+                               self.cw - QFontMetricsF(f).horizontalAdvance("M"))
         self.ch = max(1, math.ceil(fm.lineSpacing()))
         self.ascent = fm.ascent()
         self._recalc_size()
@@ -812,6 +818,11 @@ class TerminalWidget(QWidget):
             return
         if shift and key == Qt.Key.Key_Insert:
             self.paste_text(QGuiApplication.clipboard().text())
+            return
+        if ctrl and not shift and key == Qt.Key.Key_Insert and not IS_MAC:   # Ctrl+Insert copies (PuTTY, Windows Terminal)
+            t = self.selected_text()
+            if t:
+                QGuiApplication.clipboard().setText(t)
             return
         if shift and key in (Qt.Key.Key_PageUp, Qt.Key.Key_PageDown) and self.screen.alt is None:
             step = self.screen.lines - 1
