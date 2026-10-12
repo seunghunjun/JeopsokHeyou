@@ -160,7 +160,48 @@ try:
     t2.title_changed.emit(t2, "✕ two")
     check("titles update in the new window", w.tab_windows[0].tabs.tabText(0) == "✕ two")
     t2.title_changed.emit(t2, "two")
+
+    # show/hide the explorer works on the active window only
+    import jeopsokheyou.mainwindow as mw
+    real_active = mw.QApplication.activeWindow
+    try:
+        mw.QApplication.activeWindow = staticmethod(lambda: w.tab_windows[0])
+        w.toggle_explorer()
+        check("hiding the explorer in a separate window leaves the main window alone",
+              t2.explorer.isHidden() and not t1.explorer.isHidden() and w.settings.get("show_explorer", True))
+        mw.QApplication.activeWindow = staticmethod(lambda: w)
+        w.toggle_explorer()
+        check("hiding it in the main window leaves the separate window as it is",
+              t1.explorer.isHidden() and t2.explorer.isHidden() and w.settings.get("show_explorer") is False)
+        w.toggle_explorer()
+        check("... and showing it again too", not t1.explorer.isHidden() and t2.explorer.isHidden())
+        # a separate window has the main window's menus, working on that window
+        tw = w.tab_windows[0]
+        titles = [a.text() for a in w.menuBar().actions()]
+        bar = tw.menuWidget()
+        check("a separate tab window has the toolbar too", tw.findChild(mw.QToolBar) is not None)
+        check("a separate tab window has the same menus", bar is not None and [a.text() for a in bar.actions()] == titles,
+              [a.text() for a in bar.actions()] if bar else None)
+        split_act = next(a for a in w.findChildren(mw.QAction) if a.text().startswith("Split horizontally"))
+        view = next(a.menu() for a in bar.actions() if a.text() == w.menuBar().actions()[2].text())
+        check("... with the very same actions (same keys, same state)", w.explorer_act in view.actions()
+              and any(split_act in a.menu().actions() for a in bar.actions() if a.menu()))
+        mw.QApplication.activeWindow = staticmethod(lambda: tw)
+        w._sync_window_actions()
+        check("explorer item on in a tab window, session list item off", w.explorer_act.isEnabled()
+              and not w.sessions_act.isEnabled())
+        n, n1 = len(t2.panes), len(t1.panes)
+        w.split(Qt.Orientation.Horizontal)
+        check("Split from its menu splits that window's tab", wait(lambda: len(t2.panes) == n + 1)
+              and len(t1.panes) == n1, (len(t2.panes), len(t1.panes)))
+        t2.close_pane(t2.panes[-1])
+        mw.QApplication.activeWindow = staticmethod(lambda: w)
+        w._sync_window_actions()
+        check("back in the main window both items are on", w.explorer_act.isEnabled() and w.sessions_act.isEnabled())
+    finally:
+        mw.QApplication.activeWindow = real_active
     w.move_tab(t2, w.tabs, 99)
+    check("a tab moved back takes the main window's setting", not t2.explorer.isHidden())
     app.processEvents()
     check("tab dropped back on the main tab bar", w.tabs.indexOf(t2) > 0)
     check("empty tab window closed", wait(lambda: not w.tab_windows))
@@ -176,6 +217,36 @@ try:
     card = t2.empty_card
     check("only pane floats on its own", len(t2.pane_windows) == 1 and only.window() is t2.pane_windows[0]
           and not only.disconnected)
+    pw = t2.pane_windows[0]
+    pbar = pw.layout().menuBar()
+    check("a lone terminal window has the menus too", pbar is not None
+          and [a.text() for a in pbar.actions()] == [a.text() for a in w.menuBar().actions()])
+    import jeopsokheyou.mainwindow as mw
+    real_active = mw.QApplication.activeWindow
+    check("... and the toolbar", pw.findChild(mw.QToolBar) is not None)
+    check("... and an explorer of its own, on the same connection", not pw.explorer.isHidden()
+          and wait(lambda: pw.explorer.cwd != "" and pw.explorer.item_count() > 0) and pw.explorer.conn is t2.conn,
+          pw.explorer.cwd)
+    check("... at the folder of its terminal", pw.explorer.cwd == (only.cwd or pw.explorer.cwd), (pw.explorer.cwd, only.cwd))
+    try:
+        mw.QApplication.activeWindow = staticmethod(lambda: pw)
+        w._sync_window_actions()
+        check("... where the explorer item is on", w.explorer_act.isEnabled())
+        before = [t.explorer.isHidden() for t in w.session_tabs()]
+        w.toggle_explorer()
+        check("... and hides that window's explorer only", pw.explorer.isHidden()
+              and [t.explorer.isHidden() for t in w.session_tabs()] == before)
+        w.toggle_explorer()
+        check("... and shows it again", not pw.explorer.isHidden())
+        # the window's explorer moves its own terminal, not the tab's
+        t2.explorer_cwd_before = t2.explorer.cwd
+        pw.explorer.navigate("/home")
+        check("its explorer moves its terminal", wait(lambda: only.cwd == "/home", 10), only.cwd)
+        check("... and leaves the tab's explorer where it was", t2.explorer.cwd == t2.explorer_cwd_before,
+              (t2.explorer.cwd, t2.explorer_cwd_before))
+    finally:
+        mw.QApplication.activeWindow = real_active
+        w._sync_window_actions()
     check("tab shows the bring-back card", card is not None and card.isVisibleTo(t2) and t2.term_split.indexOf(card) >= 0)
     check("tab title marked", w.tabs.tabText(w.tabs.indexOf(t2)).startswith("⧉"), w.tabs.tabText(w.tabs.indexOf(t2)))
     check("no button to bring it back (drag only)", not hasattr(card, "back_btn"))
