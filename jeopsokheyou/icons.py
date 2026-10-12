@@ -33,6 +33,8 @@ LINE = {
     "split_h": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M12 4.5v15"/>',
     "split_v": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M3 12h18"/>',
     "sidebar": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M9 4.5v15"/>',
+    "explorer_panel": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M10.5 4.5v15"/>'
+                      '<path d="M5.5 9h2.5M5.5 12h2.5M5.5 15h2.5"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',
     "link": '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
     "server": '<rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01"/>',

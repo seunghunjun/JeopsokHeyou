@@ -14,6 +14,7 @@ import copy
 import math
 import re
 import sys
+import time
 from collections import defaultdict, deque
 from typing import Callable
 
@@ -300,6 +301,9 @@ class TerminalWidget(QWidget):
         self.sel_anchor = None   # (abs_row, col)
         self.sel_end = None
         self._selecting = False
+        self._click_mode = "char"        # char | word (after a double-click) | line (after a triple-click)
+        self._unit = None                # the word or line first picked, while dragging from it
+        self._last_double = None         # (time, row) of the last double-click
         self.preedit = ""
 
         self._colors: dict[str, QColor] = {}
@@ -530,8 +534,56 @@ class TerminalWidget(QWidget):
                 continue
             start = c0 if row == r0 else 0
             end = c1 if row == r1 else self.screen.columns - 1
-            out.append("".join(line[x].data for x in range(start, end + 1)).rstrip())
-        return "\n".join(out)
+            text = "".join(line[x].data for x in range(start, end + 1))
+            if row < r1 and getattr(line, "wrapped", False):
+                out.append(text)              # a long line the screen wrapped: it goes on without a line break
+            else:
+                out.append(text.rstrip() + ("\n" if row < r1 else ""))
+        return "".join(out)
+
+    def _word_bounds(self, row: int, col: int) -> tuple[int, int] | None:
+        """Columns of the word at (row, col), or None when that cell is not part of a word."""
+        line = self._line_at(row)
+        if line is None:
+            return None
+
+        def word(x):
+            d = line[x].data
+            return bool(d) and (d.isalnum() or d in "-_./~:@%+=" or d > "\x7f")
+        if not word(col):
+            return None
+        a = col
+        while a > 0 and word(a - 1):
+            a -= 1
+        b = col
+        while b < self.screen.columns - 1 and word(b + 1):
+            b += 1
+        return a, b
+
+    def _line_bounds(self, row: int) -> tuple[int, int]:
+        """First and last row of the line at ``row`` (a long line the screen wrapped counts as one)."""
+        a = row
+        while True:
+            prev = self._line_at(a - 1)
+            if prev is None or not getattr(prev, "wrapped", False):
+                break
+            a -= 1
+        b = row
+        while True:
+            cur = self._line_at(b)
+            if cur is None or not getattr(cur, "wrapped", False) or self._line_at(b + 1) is None:
+                break
+            b += 1
+        return a, b
+
+    def _unit_at(self, cell) -> tuple[tuple[int, int], tuple[int, int]]:
+        """The word or line (by the current click mode) under ``cell``, as (start, end) cells."""
+        row, col = cell
+        if self._click_mode == "line":
+            a, b = self._line_bounds(row)
+            return (a, 0), (b, self.screen.columns - 1)
+        w = self._word_bounds(row, col)
+        return ((row, w[0]), (row, w[1])) if w else (cell, cell)
 
     # ------------------------------------------------------------ painting
     def _color(self, name: str, fg: bool, bold: bool = False) -> QColor:
@@ -913,7 +965,21 @@ class TerminalWidget(QWidget):
     def mousePressEvent(self, e):
         self.setFocus()
         if e.button() == Qt.MouseButton.LeftButton:
-            self.sel_anchor = self.sel_end = self._cell_at(e.position())
+            cell = self._cell_at(e.position())
+            last = self._last_double
+            if last is not None and last[1] == cell[0] and \
+                    time.monotonic() - last[0] <= QGuiApplication.styleHints().mouseDoubleClickInterval() / 1000:
+                # third click right after a double-click: the whole line, as in other terminals
+                self._last_double = None
+                self._click_mode = "line"
+                self._unit = self._unit_at(cell)
+                self.sel_anchor, self.sel_end = self._unit
+                self._selecting = True
+                self.update()
+                return
+            self._last_double = None
+            self._click_mode = "char"
+            self.sel_anchor = self.sel_end = cell
             self._selecting = True
             self.update()
         elif e.button() in (Qt.MouseButton.RightButton, Qt.MouseButton.MiddleButton):
@@ -926,7 +992,17 @@ class TerminalWidget(QWidget):
                 self.scroll_lines(1)
             elif pos.y() > self.height():
                 self.scroll_lines(-1)
-            self.sel_end = self._cell_at(pos)
+            cell = self._cell_at(pos)
+            if self._click_mode in ("word", "line") and self._unit is not None:
+                # after a double or triple click, dragging grows the selection by whole words or lines
+                start, end = self._unit
+                here = self._unit_at(cell)
+                if cell < start:
+                    self.sel_anchor, self.sel_end = end, here[0]
+                else:
+                    self.sel_anchor, self.sel_end = start, max(end, here[1])
+            else:
+                self.sel_end = cell
             self.update()
 
     def mouseReleaseEvent(self, e):
@@ -940,23 +1016,15 @@ class TerminalWidget(QWidget):
         if e.button() != Qt.MouseButton.LeftButton:
             return
         row, col = self._cell_at(e.position())
-        line = self._line_at(row)
-        if line is None:
+        self._last_double = (time.monotonic(), row)     # a third click soon after selects the whole line
+        w = self._word_bounds(row, col)
+        if w is None:
             return
-
-        def word(x):
-            d = line[x].data
-            return bool(d) and (d.isalnum() or d in "-_./~:@%+=" or d > "\x7f")
-        if not word(col):
-            return
-        a = col
-        while a > 0 and word(a - 1):
-            a -= 1
-        b = col
-        while b < self.screen.columns - 1 and word(b + 1):
-            b += 1
+        a, b = w
         self.sel_anchor, self.sel_end = (row, a), (row, b)
-        self._selecting = False
+        self._click_mode = "word"
+        self._unit = ((row, a), (row, b))
+        self._selecting = True                          # keep the button down and drag to add whole words
         QGuiApplication.clipboard().setText(self.selected_text())
         self.update()
 

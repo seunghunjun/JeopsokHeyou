@@ -12,8 +12,9 @@ from __future__ import annotations
 
 from PySide6.QtCore import QMimeData, QObject, QPoint, QSize, Qt
 from PySide6.QtGui import QAction, QCursor, QGuiApplication, QMouseEvent
-from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QSizePolicy,
-                               QSplitter, QTabBar, QTabWidget, QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMenuBar,
+                               QPushButton, QSizePolicy, QSplitter, QTabBar, QTabWidget, QToolButton, QVBoxLayout,
+                               QWidget)
 
 from .i18n import tr
 
@@ -40,6 +41,29 @@ def add_shortcuts(window: QWidget, main) -> None:
     for a in main.findChildren(QAction):
         if not a.shortcut().isEmpty():
             window.addAction(a)
+
+
+def _copy_menu(src: QMenu, dst: QMenu) -> None:
+    for a in src.actions():
+        if a.isSeparator():
+            dst.addSeparator()
+        elif a.menu() is not None:
+            _copy_menu(a.menu(), dst.addMenu(a.menu().title()))
+        else:
+            dst.addAction(a)               # the same action: it works on the window it is used in
+
+
+def add_menu_bar(window: QWidget, main) -> QMenuBar:
+    """The main window's menus for a detached window (File, Terminal, View, Tools, Help)."""
+    bar = QMenuBar(window)
+    for top in main.menuBar().actions():
+        if top.menu() is not None:
+            _copy_menu(top.menu(), bar.addMenu(top.menu().title()))
+    if isinstance(window, QMainWindow):
+        window.setMenuBar(bar)
+    else:
+        window.layout().setMenuBar(bar)
+    return bar
 
 
 # ---------------------------------------------------------------- tabs
@@ -126,6 +150,8 @@ class TabWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
         self.setWindowIcon(main.windowIcon())
         add_shortcuts(self, main)
+        add_menu_bar(self, main)
+        self.addToolBar(main.window_toolbar())
         self._closing_quietly = False
         self.docker = MoveDocker(self, self._target_at, self._show_target, self._dock)
 
@@ -200,12 +226,32 @@ class PaneWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
         self.split = QSplitter(Qt.Orientation.Horizontal)
         self.split.is_root = True
-        lay.addWidget(self.split)
+        # its own file explorer, following this window's terminal (same connection, its own SFTP session)
+        from .explorer import SftpExplorer
+        self.explorer = SftpExplorer(tab.session.id, tab.main.settings)
+        self.explorer.follow_chk.setChecked(tab.session.follow_cwd)
+        self.explorer.disk_name = tab.session.name
+        self.explorer.navigated.connect(lambda path: tab._sync_terminal(path, self.explorer))
+        self.explorer.cd_requested.connect(lambda path: tab._cd(path, self.explorer))
+        self.explorer.setVisible(tab.main.explorer_shown(tab.main.tab_widget_of(tab)))
+        self.body = QSplitter(Qt.Orientation.Horizontal)
+        self.body.addWidget(self.explorer)
+        self.body.addWidget(self.split)
+        self.body.setStretchFactor(0, 0)
+        self.body.setStretchFactor(1, 1)
+        self.body.setCollapsible(0, False)
+        self.body.setCollapsible(1, False)
+        self.body.setSizes([360, 700])
+        self.active_pane = None             # the terminal of this window the explorer goes with
+        lay.addWidget(tab.main.window_toolbar())
+        lay.addWidget(self.body)
         self.setWindowTitle(f"{tab.session.title()} — JeopsokHeyou")
         self.setWindowIcon(tab.main.windowIcon())
         add_shortcuts(self, tab.main)
+        add_menu_bar(self, tab.main)
         self._closing_quietly = False
         self.docker = MoveDocker(self, self._target_at, self._show_target, self._dock)
 
@@ -268,12 +314,22 @@ class PaneWindow(QWidget):
     def panes(self) -> list:
         return [p for p in self.tab.panes if p.window() is self]
 
+    def start_explorer(self) -> None:
+        """Open the explorer on the tab's connection, at the folder of this window's terminal."""
+        tab = self.tab
+        if tab.conn is None or tab.state != "connected":
+            self.explorer.info.setText(tr("Disconnected"))
+            return
+        p = self.panes()
+        self.explorer.attach(tab.conn, (p[0].cwd if p and p[0].cwd else "") or tab.session.init_dir)
+
     def close_quietly(self):
         self._closing_quietly = True
         self.close()
 
     def closeEvent(self, e):
         panes = self.panes()
+        self.explorer.detach()                        # its SFTP session ends with the window
         if self in self.tab.pane_windows:
             self.tab.pane_windows.remove(self)
         if not self._closing_quietly:

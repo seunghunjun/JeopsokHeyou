@@ -7,7 +7,7 @@ import time
 from pathlib import Path
 
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QKeySequence, QPainter, QPen
+from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QGuiApplication, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (QApplication, QDockWidget, QFontDialog, QFrame, QHBoxLayout, QLabel, QInputDialog, QLineEdit,
                                QMainWindow, QMenu, QMessageBox, QPushButton, QSizePolicy, QSplitter,
                                QToolBar, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
@@ -538,20 +538,45 @@ class SessionTab(QWidget):
             pane.write_local("\x1b[31m" + tr("Cannot open shell: {error}", error=e) + "\x1b[0m\n")
         pane.setFocus()
 
+    def _explorer_for(self, pane):
+        """A terminal in a window of its own goes with that window's explorer, the others with the tab's."""
+        win = pane.window() if pane is not None else None
+        if isinstance(win, detach.PaneWindow):
+            return win.explorer
+        return self.explorer
+
+    def _terminal_for(self, explorer):
+        """The terminal an explorer moves (and follows): the one last used next to it."""
+        if explorer is not self.explorer:
+            win = explorer.window()
+            panes = win.panes() if isinstance(win, detach.PaneWindow) else []
+            return win.active_pane if win.active_pane in panes else (panes[0] if panes else None)
+        if self.active is not None and self._explorer_for(self.active) is self.explorer:
+            return self.active
+        here = [p for p in self.panes if self._explorer_for(p) is self.explorer]
+        last = getattr(self, "_tab_pane", None)
+        return last if last in here else (here[0] if here else None)
+
     def _pane_focused(self, pane):
         self.active = pane
         for p in self.panes:
             p.frame.bar.set_active(p is pane)
+        ex = self._explorer_for(pane)
+        if ex is self.explorer:
+            self._tab_pane = pane
+        else:
+            pane.window().active_pane = pane
         # In split view, clicking another terminal moves the explorer to that terminal's location
         if pane.cwd:
-            self.explorer.follow(pane.cwd, from_terminal=False)
+            ex.follow(pane.cwd, from_terminal=False)
 
     def _pane_cwd(self, pane, path: str):
         # While the explorer's next folder is still queued for this terminal, this report is the terminal
         # catching up with an earlier one: following it would pull the explorer back. The same goes for a
         # report that arrives while the app's own cd is still on its way (its answer is read after that).
-        if pane is self.active and not pane._pending_cd and not pane._hiding:
-            self.explorer.follow(path)
+        ex = self._explorer_for(pane)
+        if pane is self._terminal_for(ex) and not pane._pending_cd and not pane._hiding:
+            ex.follow(path)
 
     SYNC_MSG = {
         "busy": "A command is running in the terminal, so the terminal location was left unchanged",
@@ -559,13 +584,15 @@ class SessionTab(QWidget):
         "unsupported": "This shell does not support location sync (bash/zsh required) — use the 'Move the terminal to this folder' button",
     }
 
-    def _sync_terminal(self, path: str):
+    def _sync_terminal(self, path: str, explorer=None):
         """When the user moves to another folder in the explorer, move the terminal there too."""
-        if not self.explorer.follow_chk.isChecked() or not self.active:
+        explorer = explorer or self.explorer
+        pane = self._terminal_for(explorer)
+        if not explorer.follow_chk.isChecked() or not pane:
             return
-        msg = self.SYNC_MSG.get(self.active.sync_cd(path))
+        msg = self.SYNC_MSG.get(pane.sync_cd(path))
         if msg:
-            self.explorer.info.setText(tr(msg))
+            explorer.info.setText(tr(msg))
 
     # ------------------------------------------------------------ moving panes (drag the grip)
     def _take_out(self, pane: TerminalPane) -> None:
@@ -599,6 +626,8 @@ class SessionTab(QWidget):
         win.split.addWidget(pane.frame)
         pane.frame.bar.hide()                                 # its window title says what it is
         pane.frame.show()
+        win.active_pane = pane
+        win.start_explorer()
         win.retitle()
         self._sync_empty_card()
         win.resize(max(520, size.width()), max(320, size.height()))
@@ -718,6 +747,9 @@ class SessionTab(QWidget):
         self._close_reason = ""
         self.explorer.detach()
         self.explorer.info.setText(tr("Disconnected"))
+        for win in self.pane_windows:
+            win.explorer.detach()
+            win.explorer.info.setText(tr("Disconnected"))
         self._stop_forwards()
         if self.conn:
             self.conn.close()
@@ -754,10 +786,11 @@ class SessionTab(QWidget):
         self._disk_dismissed = True
         self.disk_banner.hide()
 
-    def _cd(self, path: str):
-        if self.active and not self.active.disconnected:
-            self.active.send_text(f" cd -- {sh_quote(path)}\r")
-            self.active.setFocus()
+    def _cd(self, path: str, explorer=None):
+        pane = self._terminal_for(explorer or self.explorer)
+        if pane and not pane.disconnected:
+            pane.send_text(f" cd -- {sh_quote(path)}\r")
+            pane.setFocus()
 
     # ------------------------------------------------------------ connection
     def _title(self):
@@ -863,6 +896,8 @@ class SessionTab(QWidget):
         pane.setFocus()
         self._disk_dismissed = False
         self.explorer.attach(self.conn, self.session.init_dir)
+        for win in self.pane_windows:
+            win.start_explorer()
         self._start_forwards()
         try:
             library.add_history(self.session)
@@ -1130,22 +1165,7 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         tb.setIconSize(QSize(18, 18))
 
-        def tool(name, tip, slot):
-            b = QToolButton()
-            icons.bind(b, name)
-            b.setIconSize(QSize(18, 18))
-            b.setToolTip(tip)
-            b.clicked.connect(slot)
-            tb.addWidget(b)
-            return b
-        def tip(label, sid):
-            return f"{tr(label)} ({shortcuts.text(sid, first_only=True)})"
-        self.home_btn = tool("home", tip("Home", "home"), lambda: self.show_home())
-        tool("plus", tip("New session", "new_session"), self.new_session)
-        tb.addSeparator()
-        tool("split_h", tip("Split left/right", "split_lr"), lambda: self.split(Qt.Orientation.Horizontal))
-        tool("split_v", tip("Split top/bottom", "split_tb"), lambda: self.split(Qt.Orientation.Vertical))
-        tool("folder_plus", tip("Show/hide SFTP explorer", "explorer"), self.toggle_explorer)
+        self.home_btn = self._toolbar_buttons(tb)
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
@@ -1157,11 +1177,56 @@ class MainWindow(QMainWindow):
         tb.addWidget(self.quick)
         self.addToolBar(tb)
 
+    def _toolbar_buttons(self, tb: QToolBar) -> QToolButton:
+        """Home, new session, split and explorer buttons (they work on the window they are in)."""
+        def tool(name, tip, slot):
+            b = QToolButton()
+            icons.bind(b, name)
+            b.setIconSize(QSize(18, 18))
+            b.setToolTip(tip)
+            b.clicked.connect(slot)
+            tb.addWidget(b)
+            return b
+        def tip(label, sid):
+            return f"{tr(label)} ({shortcuts.text(sid, first_only=True)})"
+        home = tool("home", tip("Home", "home"), lambda: self.show_home())
+        tool("plus", tip("New session", "new_session"), self.new_session)
+        tb.addSeparator()
+        tool("split_h", tip("Split left/right", "split_lr"), lambda: self.split(Qt.Orientation.Horizontal))
+        tool("split_v", tip("Split top/bottom", "split_tb"), lambda: self.split(Qt.Orientation.Vertical))
+        tool("explorer_panel", tip("Show/hide SFTP explorer", "explorer"), self.toggle_explorer)
+        return home
+
+    def window_toolbar(self) -> QToolBar:
+        """The main window's toolbar for a detached window."""
+        tb = QToolBar(tr("Tools"))
+        tb.setObjectName("quick")
+        tb.setMovable(False)
+        tb.setIconSize(QSize(18, 18))
+        self._toolbar_buttons(tb)
+        spacer = QWidget()
+        spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        tb.addWidget(spacer)
+        quick = QLineEdit()
+        quick.setPlaceholderText(tr("Quick connect — user@host:port"))
+        quick.setFixedWidth(300)
+        quick.addAction(icons.line("bolt"), QLineEdit.ActionPosition.LeadingPosition)
+
+        def go():
+            text = quick.text()
+            quick.clear()
+            self._bring_forward()           # the new tab opens in the main window
+            self.quick.setText(text)
+            self.quick_connect()
+        quick.returnPressed.connect(go)
+        tb.addWidget(quick)
+        return tb
+
     def _build_menu(self):
         mb = self.menuBar()
         m = mb.addMenu(tr("&File"))
         self._act(m, tr("New session…"), self.new_session, "new_session")
-        self._act(m, tr("Quick connect"), lambda: self.quick.setFocus(), "quick_connect")
+        self._act(m, tr("Quick connect"), self._focus_quick, "quick_connect")
         self._act(m, tr("Import PuTTY sessions"), self.import_putty)
         self._act(m, tr("Import Tabby sessions"), self.import_tabby)
         self._act(m, tr("Import MobaXterm sessions…"), self.import_mobaxterm)
@@ -1191,7 +1256,7 @@ class MainWindow(QMainWindow):
 
         m = mb.addMenu(tr("&View"))
         self._act(m, tr("Home"), lambda: self.show_home(), "home")
-        self._act(m, tr("Show/hide SFTP explorer"), self.toggle_explorer, "explorer")
+        self.explorer_act = self._act(m, tr("Show/hide SFTP explorer"), self.toggle_explorer, "explorer")
         self.sessions_act = QAction(tr("Session list panel"), self)
         self.sessions_act.setCheckable(True)
         self.sessions_act.setChecked(bool(self.settings.get("show_sessions", True)))
@@ -1244,6 +1309,24 @@ class MainWindow(QMainWindow):
             self.addAction(a)
         self._act(m, tr("Open app log folder"), self.open_app_log_folder)
         self._act(m, tr("About JeopsokHeyou"), self.show_about)
+        # detached windows share these menus: enable what makes sense in the window in front
+        QGuiApplication.instance().focusWindowChanged.connect(self._sync_window_actions)
+
+    def _sync_window_actions(self, _window=None):
+        aw = QApplication.activeWindow()
+        self.sessions_act.setEnabled(not isinstance(aw, (detach.PaneWindow, detach.TabWindow)))
+
+    def _bring_forward(self):
+        """Commands that show something in the main window bring it to the front when used elsewhere."""
+        if self.isVisible() and isinstance(QApplication.activeWindow(), (detach.PaneWindow, detach.TabWindow)):
+            if self.isMinimized():
+                self.showNormal()
+            self.raise_()
+            self.activateWindow()
+
+    def _focus_quick(self):
+        self._bring_forward()
+        self.quick.setFocus()
 
     def show_about(self):
         from . import __version__
@@ -1819,6 +1902,7 @@ class MainWindow(QMainWindow):
         index = max(1 if dest is self.tabs else 0, min(index, dest.count()))   # Home stays first
         dest.insertTab(index, tab, text)
         dest.setTabToolTip(index, tip)
+        tab.explorer.setVisible(self.explorer_shown(dest))   # a moved tab takes the window's explorer setting
         dest.setCurrentWidget(tab)
         tab.show()
         win = dest.window()
@@ -1830,6 +1914,7 @@ class MainWindow(QMainWindow):
     def float_tab(self, tab, pos) -> None:
         """Give a session tab a window of its own."""
         win = detach.TabWindow(self)
+        win.tabs.explorer_shown = not tab.explorer.isHidden()   # the new window starts the way the tab was
         self.tab_windows.append(win)
         size = tab.size()
         self.move_tab(tab, win.tabs, 0)
@@ -1868,6 +1953,9 @@ class MainWindow(QMainWindow):
         t = self.current_tab()
         if t and t.close_pane():
             return
+        if t is not None and self.tab_widget_of(t) is not self.tabs:
+            self.close_session_tab(t)        # a tab in a separate window: that one, not the main window's
+            return
         self.close_tab(self.tabs.currentIndex())
 
     def duplicate_tab(self):
@@ -1880,12 +1968,30 @@ class MainWindow(QMainWindow):
         if t:
             t.split_pane(orientation)
 
+    def explorer_shown(self, tabs) -> bool:
+        """Whether the explorer shows in this window's tabs: the main window keeps it in Settings,
+        a separate window on its own."""
+        if tabs is self.tabs:
+            return bool(self.settings.get("show_explorer", True))
+        return bool(getattr(tabs, "explorer_shown", True))
+
     def toggle_explorer(self):
-        show = not self.settings.get("show_explorer", True)
-        self.settings["show_explorer"] = show
-        for w in self.session_tabs():
-            w.explorer.setVisible(show)
-        config.save_settings(self.settings)
+        """Show or hide the explorer in the active window only (the main window or a separate one)."""
+        aw = QApplication.activeWindow()
+        if isinstance(aw, detach.PaneWindow):
+            aw.explorer.setVisible(aw.explorer.isHidden())     # a lone terminal window: its own explorer
+            return
+        tabs = aw.tabs if isinstance(aw, detach.TabWindow) else self.tabs
+        show = not self.explorer_shown(tabs)
+        if tabs is self.tabs:
+            self.settings["show_explorer"] = show
+            config.save_settings(self.settings)
+        else:
+            tabs.explorer_shown = show
+        for i in range(tabs.count()):
+            w = tabs.widget(i)
+            if isinstance(w, SessionTab):
+                w.explorer.setVisible(show)
 
     def go_to_tab(self, n: int):
         """Tab n of the active window (9 = the last one); Home is not counted in the main window."""
@@ -1907,9 +2013,11 @@ class MainWindow(QMainWindow):
         ShortcutsDialog(self).exec()
 
     def _cycle(self, d):
-        n = self.tabs.count()
+        aw = QApplication.activeWindow()
+        tabs = aw.tabs if isinstance(aw, detach.TabWindow) else self.tabs   # the tabs of the window in front
+        n = tabs.count()
         if n:
-            self.tabs.setCurrentIndex((self.tabs.currentIndex() + d) % n)
+            tabs.setCurrentIndex((tabs.currentIndex() + d) % n)
             t = self.current_tab()
             if t and t.active:
                 t.active.setFocus()
@@ -1939,6 +2047,7 @@ class MainWindow(QMainWindow):
         self.show_home("forwarding")
 
     def show_home(self, page: str = "start"):
+        self._bring_forward()
         self.tabs.setCurrentWidget(self.home)
         if page:
             self.home.show_page(page)
