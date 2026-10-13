@@ -62,6 +62,9 @@ try:
     wait(lambda: ex.cwd == "/home/tester/app")
     ex.navigate("/home/tester/logs")              # while the shell is still busy with the first cd
     check("explorer moved", wait(lambda: ex.cwd == "/home/tester/logs"))
+    pane.focused.emit(pane)                       # clicking the terminal while it is still catching up
+    check("focusing the terminal on its way doesn't pull the explorer back", wait(lambda: False, 0.3) or
+          ex.cwd == "/home/tester/logs", ex.cwd)
     check("the terminal ends up there too", wait(lambda: pane.cwd == "/home/tester/logs", 20), pane.cwd)
     wait(lambda: False, 2)
     check("the late answers never pulled the explorer back", ex.cwd == "/home/tester/logs", ex.cwd)

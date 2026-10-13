@@ -586,8 +586,10 @@ class SessionTab(QWidget):
             self._tab_pane = pane
         else:
             pane.window().active_pane = pane
-        # In split view, clicking another terminal moves the explorer to that terminal's location
-        if pane.cwd:
+        # In split view, clicking another terminal moves the explorer to that terminal's location — not while
+        # this terminal is still on its way to where the explorer just went (its location is out of date)
+        catching_up = pane._pending_cd or pane._hiding == "cd" or pane._late_cd is not None
+        if pane.cwd and not catching_up:
             ex.follow(pane.cwd, from_terminal=False)
 
     def _pane_cwd(self, pane, path: str):
