@@ -1287,6 +1287,7 @@ class SftpExplorer(QWidget):
 
     def _set_location(self, item, path: str) -> None:
         """Make ``path`` (shown by ``item``, None for /) the current folder without redrawing the tree."""
+        self._pending_view = None               # moved on: a selection kept from an earlier refresh is stale
         old = self._cwd_item
         if old is not None and old is not item:
             try:
