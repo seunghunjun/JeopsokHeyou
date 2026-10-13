@@ -2146,7 +2146,37 @@ class MainWindow(QMainWindow):
         if d.exec() and d.chosen:
             self.send_snippet(d.chosen)
 
+    def quit_question(self) -> str:
+        """What quitting would end, or "" when nothing is open (no need to ask)."""
+        tabs = [t for t in self.session_tabs() if t.state in ("connected", "connecting")]
+        tunnels = self.tunnels.running_count()
+        if not tabs and not tunnels:
+            return ""
+        lines = []
+        if tabs:
+            lines.append(tr("{n} open connection(s) will be closed.", n=len(tabs)))
+            windows = len(self.tab_windows) + sum(len(t.pane_windows) for t in self.session_tabs())
+            if windows:
+                lines.append(tr("This includes {n} separate window(s).", n=windows))
+        if any(t.explorer.transfer_active() for t in tabs) or \
+                any(win.explorer.transfer_active() for t in tabs for win in t.pane_windows):
+            lines.append(tr("A file transfer is still running."))
+        if tunnels:
+            lines.append(tr("{n} port forwarding tunnel(s) will stop.", n=tunnels))
+        return "\n".join(lines)
+
     def closeEvent(self, e):
+        # ask first when quitting would end connections, transfers or tunnels (Settings can turn it off)
+        if self.settings.get("confirm_quit", True) and not getattr(self, "_quitting", False):
+            text = self.quit_question()
+            if text:
+                answer = QMessageBox.question(self, tr("Quit JeopsokHeyou"), tr("Quit JeopsokHeyou?") + "\n\n" + text,
+                                              QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                                              QMessageBox.StandardButton.Cancel)
+                if answer != QMessageBox.StandardButton.Yes:
+                    e.ignore()
+                    return
+        self._quitting = True
         self.tunnels.stop_all()
         config.save_settings(self.settings)
         for w in self.session_tabs():

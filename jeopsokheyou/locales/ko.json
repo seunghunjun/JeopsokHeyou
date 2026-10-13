@@ -571,5 +571,13 @@
   "Large downloads": "큰 다운로드",
   "Ask above": "확인 기준",
   "Don't tear off over": "분리 금지 프로그램",
-  "A terminal is never torn off over these programs (exe names, comma separated). The taskbar, full-screen programs and programs running as administrator are always excluded.": "이 프로그램 창 위에서는 터미널을 끌어도 분리하지 않습니다(실행 파일 이름, 쉼표로 구분). 작업 표시줄, 전체 화면 프로그램, 관리자 권한으로 실행 중인 프로그램은 항상 제외됩니다."
+  "A terminal is never torn off over these programs (exe names, comma separated). The taskbar, full-screen programs and programs running as administrator are always excluded.": "이 프로그램 창 위에서는 터미널을 끌어도 분리하지 않습니다(실행 파일 이름, 쉼표로 구분). 작업 표시줄, 전체 화면 프로그램, 관리자 권한으로 실행 중인 프로그램은 항상 제외됩니다.",
+  "{n} open connection(s) will be closed.": "열린 접속 {n}개가 모두 끊어집니다.",
+  "This includes {n} separate window(s).": "분리한 창 {n}개도 함께 닫힙니다.",
+  "A file transfer is still running.": "전송 중인 파일이 있습니다.",
+  "{n} port forwarding tunnel(s) will stop.": "실행 중인 포트 포워딩 터널 {n}개가 멈춥니다.",
+  "Quit JeopsokHeyou": "접속해유 종료",
+  "Quit JeopsokHeyou?": "접속해유를 종료할까요?",
+  "Ask before quitting while connections are open": "열린 접속이 있으면 종료 전에 확인",
+  "Quitting": "종료"
 }

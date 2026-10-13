@@ -433,6 +433,9 @@ class SettingsDialog(QDialog):
         self.save_pw_default.setChecked(bool(settings.get("save_passwords", True)))
         self.save_pw_default.setToolTip(tr("Saved encrypted on this PC. Can still be turned off for each host."))
         form.addRow(tr("Passwords"), self.save_pw_default)
+        self.confirm_quit = QCheckBox(tr("Ask before quitting while connections are open"))
+        self.confirm_quit.setChecked(bool(settings.get("confirm_quit", True)))
+        form.addRow(tr("Quitting"), self.confirm_quit)
         self.card_last = QCheckBox(tr("Show when each host was last connected on its card"))
         self.card_last.setChecked(bool(settings.get("card_last_connected", True)))
         form.addRow(tr("Host cards"), self.card_last)
@@ -515,6 +518,7 @@ class SettingsDialog(QDialog):
             "disk_card": self.disk_card.isChecked(),
             "card_last_connected": self.card_last.isChecked(),
             "save_passwords": self.save_pw_default.isChecked(),
+            "confirm_quit": self.confirm_quit.isChecked(),
             "explorer_tree": self.explorer_tree.isChecked(),
             "pane_title_bar": self.pane_bar.isChecked(),
             "drag_block_apps": self.block_apps.text().strip(),
