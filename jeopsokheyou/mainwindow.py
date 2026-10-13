@@ -200,6 +200,12 @@ class TerminalPane(TerminalWidget):
                 # the shell is slow to start: keep the explorer's move for its first prompt, or that prompt
                 # would pull the explorer back to the shell's starting folder
                 self._late_cd = (self._pending_cd, time.monotonic())
+        elif self._hiding == "cd":
+            # the shell is slow to answer our cd: the folder the explorer is going to (the queued one, else the
+            # one sent) waits for the next prompt, so that late prompt can't pull the explorer back
+            target = self._pending_cd or getattr(self, "_cd_sent", None)
+            if target:
+                self._late_cd = (target, time.monotonic())
         self._hiding = None
         self._pending_cd = None
         data, self._swallow = self._swallow, b""
@@ -239,6 +245,7 @@ class TerminalPane(TerminalWidget):
         if line is None:
             return "unsupported"
         self.at_prompt = False
+        self._cd_sent = path
         self._hide_and_send("cd", line)
         return "sent"
 

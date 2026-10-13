@@ -122,7 +122,7 @@ check("cd in the shell moves the explorer", wait(lambda: ex.cwd == vroot + "/sub
 ex.navigate(vroot + "/renamed")
 check("opening a folder in the explorer moves the shell", wait(lambda: pane.cwd == vroot + "/renamed", 15), pane.cwd)
 check("the title bar shows the shell's own path", (to_native(vroot + "/renamed") if WIN else vroot + "/renamed")
-      in pane.frame.bar.title.text(), pane.frame.bar.title.text())
+      in pane.frame.bar._full, pane.frame.bar._full)
 
 # split: another shell of the same kind
 tab.split_pane(__import__("PySide6.QtCore", fromlist=["Qt"]).Qt.Orientation.Horizontal)

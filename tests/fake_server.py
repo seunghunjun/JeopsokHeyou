@@ -70,6 +70,7 @@ def shell(ch):
                     hooked = True; out += f"\x1b]7;{cwd}\x07"
                 m = re.match(r"\s*cd(?: --)? '?([^']*)'?$", line)
                 if m:
+                    time.sleep(float(os.environ.get('FAKE_CD_DELAY', '0')))   # a server slow to answer a cd
                     t = m.group(1)
                     t = t if t.startswith("/") else os.path.normpath(cwd + "/" + t).replace("\\", "/")
                     if os.path.isdir(os.path.join(ROOT, t.lstrip("/"))): cwd = t
