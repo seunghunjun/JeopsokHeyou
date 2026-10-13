@@ -571,5 +571,13 @@
   "Large downloads": "大きなダウンロード",
   "Ask above": "確認する基準",
   "Don't tear off over": "切り離さないプログラム",
-  "A terminal is never torn off over these programs (exe names, comma separated). The taskbar, full-screen programs and programs running as administrator are always excluded.": "これらのプログラムのウィンドウ上ではターミナルを切り離しません(実行ファイル名、カンマ区切り)。タスクバー、全画面のプログラム、管理者として実行中のプログラムは常に除外されます。"
+  "A terminal is never torn off over these programs (exe names, comma separated). The taskbar, full-screen programs and programs running as administrator are always excluded.": "これらのプログラムのウィンドウ上ではターミナルを切り離しません(実行ファイル名、カンマ区切り)。タスクバー、全画面のプログラム、管理者として実行中のプログラムは常に除外されます。",
+  "{n} open connection(s) will be closed.": "開いている接続 {n} 件がすべて切断されます。",
+  "This includes {n} separate window(s).": "切り離したウィンドウ {n} 個も一緒に閉じます。",
+  "A file transfer is still running.": "転送中のファイルがあります。",
+  "{n} port forwarding tunnel(s) will stop.": "実行中のポートフォワーディングのトンネル {n} 本が停止します。",
+  "Quit JeopsokHeyou": "JeopsokHeyou を終了",
+  "Quit JeopsokHeyou?": "JeopsokHeyou を終了しますか?",
+  "Ask before quitting while connections are open": "接続中は終了前に確認する",
+  "Quitting": "終了"
 }

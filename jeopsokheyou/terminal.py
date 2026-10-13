@@ -20,7 +20,7 @@ from typing import Callable
 
 import pyte
 from pyte.screens import Margins
-from PySide6.QtCore import QPointF, QRect, Qt, QTimer, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import (QColor, QFont, QFontDatabase, QFontMetricsF, QGuiApplication,
                            QKeyEvent, QPainter, QPen)
 from PySide6.QtWidgets import QScrollBar, QWidget
@@ -272,6 +272,9 @@ class TerminalWidget(QWidget):
 
     SB_W = 10
     PAD = 8     # padding between text and widget edges
+    # letters are drawn in short runs, each placed on its cell: the spacing that fits a letter to its cell is
+    # rounded to 1/64 px inside Qt, and over a long run that rounding would add up to a visible shift
+    RUN = 8
 
     def __init__(self, font: QFont, scrollback: int = 5000, encoding: str = "utf-8", parent=None):
         super().__init__(parent)
@@ -353,17 +356,29 @@ class TerminalWidget(QWidget):
         self.bold_font = QFont(font)
         self.bold_font.setBold(True)
         fm = QFontMetricsF(self.term_font)
-        self.cw = max(1, math.ceil(fm.horizontalAdvance("M")))
-        # Cells are whole pixels but glyphs are not (e.g. 9.375 px): stretch each letter to the cell width so
-        # a run of text stays on the grid and the cursor sits right after the last character.
+        # Cells are whole pixels of the screen (like Windows Terminal): at 150 % a 9.375 px glyph is 14.06 screen
+        # pixels, so a cell is 14 screen pixels = 9.33 px here. Rounding up in widget pixels (10 = 15 screen
+        # pixels) spread the text out. Each letter is then fitted to the cell, so a run of text stays on the grid
+        # and the cursor sits right after the last character.
+        dpr = self._metrics_dpr = self._dpr()
+        self.cw = max(1, round(fm.horizontalAdvance("M") * dpr)) / dpr
         for f in (self.term_font, self.bold_font):
             f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0)
             f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing,
                                self.cw - QFontMetricsF(f).horizontalAdvance("M"))
-        self.ch = max(1, math.ceil(fm.lineSpacing()))
+        self.ch = max(1, math.ceil(fm.lineSpacing() * dpr)) / dpr
         self.ascent = fm.ascent()
         self._recalc_size()
         self.update()
+
+    def _dpr(self) -> float:
+        """Screen pixels per widget pixel where this terminal is shown (1.5 at 150 %)."""
+        win = self.window().windowHandle() if self.window() is not None else None
+        screen = win.screen() if win is not None else QGuiApplication.primaryScreen()
+        try:
+            return float(screen.devicePixelRatio()) if screen is not None else 1.0
+        except Exception:
+            return 1.0
 
     # ------------------------------------------------------------ I/O
     def feed(self, data: bytes) -> None:
@@ -447,8 +462,8 @@ class TerminalWidget(QWidget):
     # ------------------------------------------------------------ size
     def _recalc_size(self) -> None:
         w = max(1, self.width() - self.SB_W - 2 * self.PAD)
-        cols = max(10, w // self.cw)
-        rows = max(3, (self.height() - 2 * self.PAD) // self.ch)
+        cols = max(10, int(w // self.cw))
+        rows = max(3, int((self.height() - 2 * self.PAD) // self.ch))
         self._want_size = (rows, cols)
         if cols != self.screen.columns or rows != self.screen.lines:
             # apply once after the layout settles (60ms) so transient small sizes
@@ -602,6 +617,8 @@ class TerminalWidget(QWidget):
         return c
 
     def paintEvent(self, e):
+        if self._dpr() != getattr(self, "_metrics_dpr", None):
+            self.set_font(self.term_font)      # moved to a screen with another scale: cells in its pixels
         p = QPainter(self)
         p.fillRect(self.rect(), self.bg_default)
         p.translate(self.PAD, self.PAD)
@@ -643,7 +660,7 @@ class TerminalWidget(QWidget):
                     bgc = "END"
                 if bgc is not run_color:
                     if run_color is not None and run_color != "END":
-                        p.fillRect(run_start * cw, y, (x - run_start) * cw, ch, run_color)
+                        p.fillRect(QRectF(run_start * cw, y, (x - run_start) * cw, ch), run_color)
                     run_start, run_color = x, bgc
             # 2) text
             run, run_x, run_key, run_fgc = [], 0, None, None
@@ -661,7 +678,7 @@ class TerminalWidget(QWidget):
                 else:
                     d, key = "", None
                 ascii_ok = len(d) == 1 and " " <= d < "\x7f"
-                if run and (key != run_key or not ascii_ok):
+                if run and (key != run_key or not ascii_ok or len(run) >= self.RUN):
                     self._draw_run(p, run_x, y, "".join(run), run_key, run_fgc)
                     run = []
                 if x >= xmax:
@@ -689,11 +706,11 @@ class TerminalWidget(QWidget):
         p.drawText(QPointF(x * self.cw, y + self.ascent), text)
         if under:
             uy = y + self.ch - 2
-            p.drawLine(x * self.cw, uy, (x + len(text)) * self.cw, uy)
+            p.drawLine(QPointF(x * self.cw, uy), QPointF((x + len(text)) * self.cw, uy))
 
-    def _cursor_rect(self) -> QRect:
+    def _cursor_rect(self) -> QRectF:
         c = self.screen.cursor
-        return QRect(c.x * self.cw, c.y * self.ch, self.cw, self.ch)
+        return QRectF(c.x * self.cw, c.y * self.ch, self.cw, self.ch)
 
     def _paint_cursor(self, p: QPainter) -> None:
         s = self.screen
@@ -705,11 +722,11 @@ class TerminalWidget(QWidget):
             p.setFont(self.term_font)
             fm = QFontMetricsF(self.term_font)
             w = max(self.cw * 2, math.ceil(fm.horizontalAdvance(self.preedit)))
-            p.fillRect(r.x(), r.y(), w, r.height(), QColor("#3a3d41"))
+            p.fillRect(QRectF(r.x(), r.y(), w, r.height()), QColor("#3a3d41"))
             p.setPen(QColor("#ffffff"))
             p.drawText(QPointF(r.x(), r.y() + self.ascent), self.preedit)
             p.setPen(QPen(self.cursor_color))
-            p.drawLine(r.x(), r.bottom(), r.x() + w, r.bottom())
+            p.drawLine(QPointF(r.x(), r.bottom() - 1), QPointF(r.x() + w, r.bottom() - 1))
             return
         line = s.buffer[s.cursor.y]
         c = line[s.cursor.x]
@@ -810,7 +827,7 @@ class TerminalWidget(QWidget):
         other, current = QColor(255, 214, 10, 80), QColor(255, 149, 0, 150)
         for i, (row, c0, c1) in enumerate(self.search_hits):
             if top <= row < bottom:
-                p.fillRect(c0 * self.cw, (row - top) * self.ch, (c1 - c0 + 1) * self.cw, self.ch,
+                p.fillRect(QRectF(c0 * self.cw, (row - top) * self.ch, (c1 - c0 + 1) * self.cw, self.ch),
                            current if i == self.search_index else other)
 
     # ------------------------------------------------------------ keyboard
@@ -954,7 +971,7 @@ class TerminalWidget(QWidget):
 
     def inputMethodQuery(self, q):
         if q == Qt.InputMethodQuery.ImCursorRectangle:
-            return self._cursor_rect().translated(self.PAD, self.PAD)
+            return self._cursor_rect().translated(self.PAD, self.PAD).toAlignedRect()
         if q == Qt.InputMethodQuery.ImFont:
             return self.term_font
         if q == Qt.InputMethodQuery.ImEnabled:

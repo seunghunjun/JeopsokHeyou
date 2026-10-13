@@ -86,5 +86,6 @@ w.go_to_tab(9)
 check("tab 9 is the last tab", w.tabs.currentWidget().session.name == "c")
 w.go_to_tab(7)
 check("missing tab number does nothing", w.tabs.currentWidget().session.name == "c")
+w.settings["confirm_quit"] = False   # still connecting: quit without asking
 w.close()
 print("DONE")
