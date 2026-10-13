@@ -235,9 +235,19 @@ class TerminalPane(TerminalWidget):
             return "busy"             # vim, tail -f, etc. running
         if self.input_dirty:
             return "typing"           # Don't clobber a command being typed
+        line = self.cd_command(path)
+        if line is None:
+            return "unsupported"
         self.at_prompt = False
-        self._hide_and_send("cd", f" cd -- {sh_quote(path)}\r")
+        self._hide_and_send("cd", line)
         return "sent"
+
+    def cd_command(self, path: str) -> str | None:
+        """The (hidden) command that moves this shell to ``path``."""
+        return f" cd -- {sh_quote(path)}\r"
+
+    def shown_cwd(self) -> str:
+        return self.cwd
 
     def _on_closed(self):
         self.disconnected = True
@@ -403,8 +413,11 @@ class SessionTab(QWidget):
         self._add_pane()
 
     # ------------------------------------------------------------ pane
+    def _new_pane(self) -> TerminalPane:
+        return TerminalPane(self.main.term_font, self.main.settings, self.session)
+
     def _add_pane(self, orientation=None) -> TerminalPane:
-        pane = TerminalPane(self.main.term_font, self.main.settings, self.session)
+        pane = self._new_pane()
         pane.closed.connect(self._pane_closed)
         pane.focused.connect(self._pane_focused)
         pane.close_requested.connect(self.close_terminal)
@@ -444,7 +457,7 @@ class SessionTab(QWidget):
 
     # ------------------------------------------------------------ title bars, full-tab view, empty area
     def _update_bar(self, pane):
-        cwd = pane.cwd or ""
+        cwd = pane.shown_cwd() or ""
         pane.frame.bar.set_title(self.session.title() + (f"  ·  {cwd}" if cwd else ""))
         win = pane.window()
         if isinstance(win, detach.PaneWindow):
@@ -788,8 +801,9 @@ class SessionTab(QWidget):
 
     def _cd(self, path: str, explorer=None):
         pane = self._terminal_for(explorer or self.explorer)
-        if pane and not pane.disconnected:
-            pane.send_text(f" cd -- {sh_quote(path)}\r")
+        line = pane.cd_command(path) if pane else None
+        if pane and not pane.disconnected and line:
+            pane.send_text(line)
             pane.setFocus()
 
     # ------------------------------------------------------------ connection
@@ -984,6 +998,8 @@ class SessionTab(QWidget):
 
 
 GROUP_ROLE = Qt.ItemDataRole.UserRole + 1   # group name for group items
+LOCAL_ROLE = Qt.ItemDataRole.UserRole + 2   # a shell of this computer (profile key)
+LOCAL_GROUP = "\x00local"                   # the "This computer" section of the session list
 DEFAULT_THEME = "light"
 THEME_CHOICES = (("light", "Light (default)"), ("dark", "Dark"), ("system", "Follow Windows setting"))
 
@@ -1035,6 +1051,9 @@ class SessionTree(QTreeWidget):
             e.ignore()
             return
         group = self.target_group(self.itemAt(e.position().toPoint()), self.dropIndicatorPosition())
+        if group == LOCAL_GROUP:                         # servers don't go into "This computer"
+            e.ignore()
+            return
         ids = self.selected_session_ids()
         # Don't let the tree move items itself; update the store, then redraw
         e.setDropAction(Qt.DropAction.IgnoreAction)
@@ -1044,6 +1063,8 @@ class SessionTree(QTreeWidget):
 
 
 class MainWindow(QMainWindow):
+    local_shells_found = Signal()           # the shells of this computer are known (looked up in the background)
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"JeopsokHeyou {__version__}")
@@ -1191,6 +1212,11 @@ class MainWindow(QMainWindow):
             return f"{tr(label)} ({shortcuts.text(sid, first_only=True)})"
         home = tool("home", tip("Home", "home"), lambda: self.show_home())
         tool("plus", tip("New session", "new_session"), self.new_session)
+        term = tool("terminal", tip("New local terminal", "local_terminal"), lambda: self.open_local())
+        term.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        menu = QMenu(term)
+        menu.aboutToShow.connect(lambda m=menu: self.fill_local_menu(m))
+        term.setMenu(menu)
         tb.addSeparator()
         tool("split_h", tip("Split left/right", "split_lr"), lambda: self.split(Qt.Orientation.Horizontal))
         tool("split_v", tip("Split top/bottom", "split_tb"), lambda: self.split(Qt.Orientation.Vertical))
@@ -1226,6 +1252,9 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         m = mb.addMenu(tr("&File"))
         self._act(m, tr("New session…"), self.new_session, "new_session")
+        self._act(m, tr("New local terminal"), lambda: self.open_local(), "local_terminal")
+        self.local_submenu = m.addMenu(tr("New local terminal with"))
+        self.local_submenu.aboutToShow.connect(lambda: self.fill_local_menu(self.local_submenu))
         self._act(m, tr("Quick connect"), self._focus_quick, "quick_connect")
         self._act(m, tr("Import PuTTY sessions"), self.import_putty)
         self._act(m, tr("Import Tabby sessions"), self.import_tabby)
@@ -1504,6 +1533,8 @@ class MainWindow(QMainWindow):
             else:
                 tree.addTopLevelItem(it)
             add_edit_button(tree, it, lambda _c=False, s=s: self.edit_session(s))
+        self._add_local_section(tree, q, section_font, t)
+
         def sessions_under(name: str) -> int:
             return sum(1 for s in self.store.sessions if config.in_group(s.group, name)
                        and (not q or q in f"{s.title()} {s.host} {s.user} {s.group}".lower()))
@@ -1516,6 +1547,46 @@ class MainWindow(QMainWindow):
         if hasattr(self, "home"):
             self.home.hosts.refresh()
             self.home.start.refresh()
+
+    def _add_local_section(self, tree, q: str, section_font, t) -> None:
+        """"This computer" at the end of the session list: its shells (found in the background at start)."""
+        from . import localshell
+        found = localshell.profiles(self.settings, wait=False)
+        if localshell.detected_if_ready() is None and not getattr(self, "_local_lookup", False):
+            self._local_lookup = True
+            import threading
+
+            def look():
+                localshell.detect_shells()
+                try:
+                    self.local_shells_found.emit()
+                except RuntimeError:
+                    pass                          # the window is gone
+            self.local_shells_found.connect(self.reload_sessions)
+            threading.Thread(target=look, daemon=True).start()
+        shown = [p for p in found if not q or q in p.name.lower()]
+        if not shown:
+            return
+        Flag = Qt.ItemFlag
+        g = QTreeWidgetItem([tr("This computer")])
+        g.setFont(0, section_font)
+        g.setForeground(0, QColor(t.faint))
+        g.setData(0, GROUP_ROLE, LOCAL_GROUP)
+        g.setFlags(Flag.ItemIsEnabled | Flag.ItemIsSelectable)
+        tree.insertTopLevelItem(0, g)           # first: this computer, then the servers
+        icon = icons.line_selectable("terminal", t.accent, t.accent_text)
+        for p in shown:
+            it = QTreeWidgetItem([p.name])
+            it.setIcon(0, icon)
+            it.setToolTip(0, tr("Open a terminal on this computer") + "\n" + " ".join(p.argv[:1]))
+            it.setData(0, LOCAL_ROLE, p.key())
+            it.setFlags(Flag.ItemIsEnabled | Flag.ItemIsSelectable)
+            g.addChild(it)
+        g.setExpanded(bool(q) or LOCAL_GROUP not in self._collapsed)
+
+    def _local_profile(self, key: str):
+        from . import localshell
+        return next((p for p in localshell.profiles(self.settings) if p.key() == key), None)
 
     def _toggle_group(self, item, _col=0):
         if item.data(0, GROUP_ROLE) is None or not item.childCount():
@@ -1537,11 +1608,20 @@ class MainWindow(QMainWindow):
                 if found is not None:
                     return found
             return None
-        it = first_session([tree.topLevelItem(i) for i in range(tree.topLevelItemCount())])
+        tops = [tree.topLevelItem(i) for i in range(tree.topLevelItemCount())]
+        servers = [x for x in tops if x.data(0, GROUP_ROLE) != LOCAL_GROUP]
+        local = [x for x in tops if x.data(0, GROUP_ROLE) == LOCAL_GROUP]
+        it = first_session(servers) or first_session(local)      # a server first, a shell only if nothing else
         if it is not None:
             self._on_session_double(it)
 
     def _on_session_double(self, item, _col=0):
+        key = item.data(0, LOCAL_ROLE)
+        if key:
+            p = self._local_profile(key)
+            if p is not None:
+                self.open_local(p)
+            return
         sid = item.data(0, Qt.ItemDataRole.UserRole)
         s = self.store.get(sid) if sid else None
         if s:
@@ -1552,6 +1632,13 @@ class MainWindow(QMainWindow):
         m = QMenu(self)
         sid = item.data(0, Qt.ItemDataRole.UserRole) if item else None
         group = item.data(0, GROUP_ROLE) if item else None
+        if item is not None and (item.data(0, LOCAL_ROLE) or group == LOCAL_GROUP):
+            key = item.data(0, LOCAL_ROLE)
+            if key:
+                m.addAction(tr("Open"), lambda: self._on_session_double(item))
+            m.addAction(tr("Local terminals…"), self.edit_local_shells)
+            m.exec(self.session_tree.viewport().mapToGlobal(pos))
+            return
         s = self.store.get(sid) if sid else None
         if s:
             ids = self.session_tree.selected_session_ids() or [s.id]
@@ -1895,13 +1982,14 @@ class MainWindow(QMainWindow):
         if src is None or not isinstance(tab, SessionTab):
             return
         i = src.indexOf(tab)
-        text, tip = src.tabText(i), src.tabToolTip(i)
+        text, tip, tab_icon = src.tabText(i), src.tabToolTip(i), src.tabIcon(i)
         if src is dest and i < index:
             index -= 1
         src.removeTab(i)
         index = max(1 if dest is self.tabs else 0, min(index, dest.count()))   # Home stays first
         dest.insertTab(index, tab, text)
         dest.setTabToolTip(index, tip)
+        dest.setTabIcon(index, tab_icon)
         tab.explorer.setVisible(self.explorer_shown(dest))   # a moved tab takes the window's explorer setting
         dest.setCurrentWidget(tab)
         tab.show()
@@ -1960,8 +2048,49 @@ class MainWindow(QMainWindow):
 
     def duplicate_tab(self):
         t = self.current_tab()
-        if t:
+        if t and getattr(t, "profile", None) is not None:
+            self.open_local(t.profile)
+        elif t:
             self.open_session(t.session, t.password, t.passphrase)
+
+    def open_local(self, profile=None):
+        """A terminal on this computer (the default shell, or the one picked)."""
+        from . import localshell
+        from .localtab import LocalSessionTab
+        profile = profile or localshell.default_profile(self.settings)
+        if profile is None:
+            QMessageBox.information(self, tr("Local terminal"), tr("No shell was found on this computer."))
+            return
+        entry = "local:" + profile.key()                  # recent list (Home): shells too, newest first
+        recent = [x for x in self.settings.get("recent", []) if x != entry]
+        self.settings["recent"] = [entry] + recent[:19]
+        config.save_settings(self.settings)
+        tab = LocalSessionTab(profile, self)
+        tab.title_changed.connect(self._on_tab_title)
+        idx = self.tabs.addTab(tab, profile.name)
+        self.tabs.setTabIcon(idx, icons.line("terminal"))
+        self.tabs.setTabToolTip(idx, tr("This computer") + " · " + profile.name)
+        self.tabs.setCurrentIndex(idx)
+        tab.explorer.setVisible(self.explorer_shown(self.tabs))
+        tab.connect()
+        if hasattr(self, "home"):
+            self.home.start.refresh()
+
+    def fill_local_menu(self, m: QMenu) -> None:
+        """Shells of this computer, for the terminal button and the File menu."""
+        from . import localshell
+        m.clear()
+        for p in localshell.profiles(self.settings):
+            a = m.addAction(icons.line("terminal"), p.name)
+            a.triggered.connect(lambda _c=False, p=p: self.open_local(p))
+        m.addSeparator()
+        m.addAction(tr("Local terminals…"), self.edit_local_shells)
+
+    def edit_local_shells(self):
+        from .localtab import LocalShellsDialog
+        if LocalShellsDialog(self.settings, self).exec():
+            config.save_settings(self.settings)
+            self.reload_sessions()
 
     def split(self, orientation):
         t = self.current_tab()

@@ -76,6 +76,27 @@ def main() -> int:
         applog.shutdown()
 
 
+def _local_shell_works() -> str:
+    """Start the usual shell of this computer in a pseudo terminal and wait for its first output
+    ("ok", or what went wrong) — proves the terminal parts are in the build."""
+    import threading
+
+    from jeopsokheyou import localshell
+    try:
+        p = localshell.default_profile({})
+        if p is None:
+            return "no shell found"
+        proc = localshell.LocalProcess(p, 80, 24)
+    except Exception as e:
+        return f"{type(e).__name__}: {e}"
+    got = []
+    t = threading.Thread(target=lambda: got.append(proc.recv(4096)), daemon=True)
+    t.start()
+    t.join(15)
+    proc.close()
+    return "ok" if got and got[0] else "no output"
+
+
 def self_test(app: QApplication, w: MainWindow, report_path: str) -> int:
     """Used by tools/build_release.py to verify a frozen build without a console."""
     import json
@@ -93,6 +114,7 @@ def self_test(app: QApplication, w: MainWindow, report_path: str) -> int:
         "qt_translators": len(_i18n._qt_translators),
         "window_title": w.windowTitle(),
         "menus": [a.text() for a in w.menuBar().actions()],
+        "local_shell": _local_shell_works(),
     }
     with open(report_path, "w", encoding="utf-8") as fh:
         json.dump(report, fh, ensure_ascii=False, indent=2)

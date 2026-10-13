@@ -15,6 +15,7 @@ import os
 import posixpath
 import queue
 import stat
+import sys
 import tempfile
 import threading
 import time
@@ -498,6 +499,9 @@ class PathBar(QWidget):
         super().__init__()
         self.setObjectName("PathBar")
         self.path = ""
+        self.root_label = "/"                      # "This PC" for a Windows local terminal
+        self.shown = lambda p: p                   # path as the user reads / types it
+        self.typed = lambda t: t
         self.stack = QStackedLayout(self)
         self.crumbs = QWidget()
         self.crumb_lay = QHBoxLayout(self.crumbs)
@@ -525,7 +529,7 @@ class PathBar(QWidget):
             if w:
                 w.deleteLater()
         parts = [p for p in path.split("/") if p]
-        segs = [("/", "/")]
+        segs = [(self.root_label, "/")]
         acc = ""
         for part in parts:
             acc += "/" + part
@@ -550,7 +554,7 @@ class PathBar(QWidget):
         self.stack.setCurrentIndex(0)
 
     def start_edit(self):
-        self.edit.setText(self.path)
+        self.edit.setText(self.shown(self.path))
         self.stack.setCurrentIndex(1)
         self.edit.setFocus()
         self.edit.selectAll()
@@ -565,7 +569,7 @@ class PathBar(QWidget):
             super().keyPressEvent(e)
 
     def _commit(self):
-        t = self.edit.text().strip() or "/"
+        t = self.typed(self.edit.text().strip()) or "/"
         self.stack.setCurrentIndex(0)
         self.path_entered.emit(t)
 
@@ -591,9 +595,11 @@ class MutedDelegate(QStyledItemDelegate):
 class FileTree(QTreeWidget):
     files_dropped = Signal(list, object)  # local paths, target item(or None)
     drag_out = Signal()                   # started dragging remote items out
+    remote_dropped = Signal(object, object)   # a server explorer's items dropped here (source explorer, target)
 
     def __init__(self):
         super().__init__()
+        self.explorer = None              # the explorer this list belongs to
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
@@ -602,24 +608,50 @@ class FileTree(QTreeWidget):
     def startDrag(self, actions):
         self.drag_out.emit()
 
+    def _from(self, e) -> str:
+        """"files" (from the file manager or this computer's explorer), "remote" (a server's explorer, onto this
+        computer's) or "" (not accepted — e.g. our own items)."""
+        if not e.mimeData().hasUrls():
+            return ""
+        src = e.source()
+        if src is None:
+            return "files"
+        other = getattr(src, "explorer", None)
+        mine = self.explorer
+        if other is None or mine is None or other is mine:
+            return ""
+        if other.is_local:
+            return "files"                # this computer's files: upload / copy them here
+        return "remote" if mine.is_local else ""
+
     def dragEnterEvent(self, e):
         # don't accept drags from ourselves (download placeholders) as uploads
-        if e.mimeData().hasUrls() and e.source() is None:
-            e.acceptProposedAction()
+        if self._from(e):
+            e.setDropAction(Qt.DropAction.CopyAction)
+            e.accept()
         else:
             e.ignore()
 
     def dragMoveEvent(self, e):
-        if e.mimeData().hasUrls() and e.source() is None:
-            e.acceptProposedAction()
+        if self._from(e):
+            e.setDropAction(Qt.DropAction.CopyAction)
+            e.accept()
         else:
             e.ignore()
 
     def dropEvent(self, e):
+        kind = self._from(e)
+        target = self.itemAt(e.position().toPoint())
+        if kind == "remote":
+            self.remote_dropped.emit(e.source().explorer, target)
+            e.setDropAction(Qt.DropAction.CopyAction)
+            e.accept()
+            return
         paths = [u.toLocalFile() for u in e.mimeData().urls() if u.isLocalFile()]
-        if paths:
-            self.files_dropped.emit(paths, self.itemAt(e.position().toPoint()))
-            e.acceptProposedAction()
+        if kind and paths:
+            self.files_dropped.emit(paths, target)
+            e.setDropAction(Qt.DropAction.CopyAction)
+            e.accept()
 
 
 class SftpExplorer(QWidget):
@@ -657,7 +689,25 @@ class SftpExplorer(QWidget):
         self.disk_time = 0.0
         self.disk_name = ""
         self._disk_card = None
+        self._internal_drop = None                 # a drag of ours dropped on this computer's explorer: (folder, explorer)
+        self._refresh_after_download = None        # that explorer, refreshed once the download is done
+        self._pending_view = None                  # selection + scroll to put back after a refresh
+        self._dir_watch = None                     # this computer's folders on screen (local terminals only)
+        self._changed_dirs: set[str] = set()
+        self._watch_timer = QTimer(self)
+        self._watch_timer.setSingleShot(True)
+        self._watch_timer.setInterval(300)
+        self._watch_timer.timeout.connect(self._local_changed)
         self._build()
+
+    @property
+    def is_local(self) -> bool:
+        """The explorer of a local terminal (this computer's files)."""
+        return bool(getattr(self.conn, "is_local", False))
+
+    def _native(self, path: str) -> str:
+        from .localshell import to_native
+        return to_native(path)
 
     # ------------------------------------------------------------ layout
     def _build(self):
@@ -688,8 +738,10 @@ class SftpExplorer(QWidget):
         btn("home", tr("Home folder"), lambda: self.navigate(self.home or "."))
         btn("refresh", tr("Refresh (F5)"), self.refresh)
         bar.addStretch(1)
-        btn("upload", tr("Upload… (you can also drag files in from {fm})", fm=paths.file_manager_name()), self.upload_dialog)
-        btn("download", tr("Download… (you can also drag items out to {fm})", fm=paths.file_manager_name()), self.download_selected)
+        self.upload_btn = btn("upload", tr("Upload… (you can also drag files in from {fm})", fm=paths.file_manager_name()),
+                              self.upload_dialog)
+        self.download_btn = btn("download", tr("Download… (you can also drag items out to {fm})", fm=paths.file_manager_name()),
+                                self.download_selected)
         btn("folder_plus", tr("New folder"), self.new_folder)
         btn("terminal", tr("Move the terminal to this folder (cd)"), self.cd_here)
         self.follow_chk = btn("link", "", lambda: None)
@@ -721,7 +773,9 @@ class SftpExplorer(QWidget):
         self.tree.itemCollapsed.connect(self._on_collapsed)
         self.tree.currentItemChanged.connect(self._on_current_changed)
         self.tree.files_dropped.connect(self._on_dropped)
+        self.tree.remote_dropped.connect(self._on_remote_dropped)
         self.tree.drag_out.connect(self._start_drag_out)
+        self.tree.explorer = self
         h = self.tree.header()
         h.setStretchLastSection(False)
         h.setMinimumSectionSize(40)
@@ -826,6 +880,15 @@ class SftpExplorer(QWidget):
     def attach(self, conn: SshConnection, start_dir: str = "") -> None:
         self.detach()
         self.conn = conn
+        local = self.is_local
+        self.upload_btn.setVisible(not local)
+        self.download_btn.setVisible(not local)
+        if local:
+            from .localshell import IS_WIN, to_native, to_virtual
+            if IS_WIN:
+                self.path_edit.root_label = tr("This PC")
+                self.path_edit.shown = lambda p: to_native(p) or ""
+                self.path_edit.typed = lambda t: to_virtual(t) if (len(t) >= 2 and t[1] == ":") or t.startswith("\\\\") else t
         self.browse = SftpWorker(conn)
         self.browse.result.connect(self._on_result)
         self.browse.error.connect(self._on_error)
@@ -845,6 +908,8 @@ class SftpExplorer(QWidget):
 
     def detach(self) -> None:
         self._listings.clear()
+        if self._dir_watch is not None and self._dir_watch.directories():
+            self._dir_watch.removePaths(self._dir_watch.directories())
         for w in (self.browse, self.transfer):
             if w:
                 w.cancel = True
@@ -898,6 +963,8 @@ class SftpExplorer(QWidget):
             del self.history[:-50]
             self.forward.clear()
         self.info.setText(tr("Loading… {path}", path=path))
+        if origin != "refresh":
+            self._pending_view = None
         self._target = path   # so comparisons use the intended destination even before the listing arrives
         if origin != "refresh":
             self._expanded.clear()   # moving somewhere: only the way to the new folder stays open
@@ -985,15 +1052,18 @@ class SftpExplorer(QWidget):
             path, entries, origin = payload
             if origin == "refresh" and path != self.cwd:
                 return              # the location changed while this refresh was on its way: it is stale
+            keep = self._view_state() if origin == "refresh" and path == self.cwd else None
             if isinstance(entries, dict):
-                self._fill_tree(path, entries)
+                self._fill_tree(path, entries, keep)
             else:
-                self._fill(path, entries)
+                self._fill(path, entries, keep)
             if origin == "user":
                 self.navigated.emit(path)
+            self._watch_local()
         elif tag == "expand":
             path, entries, _origin = payload
             self._listings[path] = list(entries)
+            QTimer.singleShot(0, self._watch_local)
             item = self._find_item(path)
             if item is not None:
                 self._populate(item, path)
@@ -1003,8 +1073,13 @@ class SftpExplorer(QWidget):
                     self._building += 1
                     item.setExpanded(True)
                     self._building -= 1
+                if self._pending_view is not None:      # items inside it were selected before the refresh
+                    self._restore_view(self._pending_view)
         elif tag == "download":
             self._done(tr("Download complete → {path}", path=payload))
+            target, self._refresh_after_download = self._refresh_after_download, None
+            if target is not None:
+                target.refresh()
         elif tag == "upload_check":
             self._upload_checked(*payload)
         elif tag == "upload":
@@ -1248,6 +1323,8 @@ class SftpExplorer(QWidget):
     def _on_current_changed(self, item, _previous):
         """Tree view: clicking a folder (or a file) makes that folder the current location — path bar,
         Up, uploads. The terminal only follows on double-click."""
+        if not self._building:
+            self._pending_view = None           # the user picked something: nothing to put back any more
         if not self.tree_mode() or self._building or item is None:
             return
         path = item.data(0, Qt.ItemDataRole.UserRole)
@@ -1274,7 +1351,43 @@ class SftpExplorer(QWidget):
     def _on_collapsed(self, item):
         self._expanded.discard(item.data(0, Qt.ItemDataRole.UserRole) or "")
 
-    def _fill_tree(self, path: str, listings: dict):
+    # ------------------------------------------------------------ keeping the view on refresh
+    def _view_state(self) -> dict:
+        """What the user is looking at: selected items, the item with the cursor, the scroll position."""
+        cur = self.tree.currentItem()
+        return {"selected": [it.data(0, Qt.ItemDataRole.UserRole) for it in self.tree.selectedItems()
+                             if it.data(0, Qt.ItemDataRole.UserRole)],
+                "current": cur.data(0, Qt.ItemDataRole.UserRole) if cur is not None else None,
+                "scroll": self.tree.verticalScrollBar().value(),
+                "hscroll": self.tree.horizontalScrollBar().value(),
+                # a folder made current by a click stays folded if it was (only moving there opens it)
+                "cwd_open": self._cwd_item_open()}
+
+    def _cwd_item_open(self) -> bool:
+        try:
+            return self._cwd_item is None or self._cwd_item.isExpanded()
+        except RuntimeError:
+            return True
+
+    def _restore_view(self, state: dict) -> None:
+        """Put the selection and the scroll position back (items that are gone are simply not selected)."""
+        from PySide6.QtCore import QItemSelectionModel
+        self._building += 1                     # not a click: the location must not change
+        try:
+            cur = self._find_item(state["current"]) if state.get("current") else None
+            if cur is not None:
+                self.tree.setCurrentItem(cur, 0, QItemSelectionModel.SelectionFlag.NoUpdate)
+            self.tree.clearSelection()
+            for p in state["selected"]:
+                it = self._find_item(p)
+                if it is not None:
+                    it.setSelected(True)
+            self.tree.verticalScrollBar().setValue(state["scroll"])
+            self.tree.horizontalScrollBar().setValue(state["hscroll"])
+        finally:
+            self._building -= 1
+
+    def _fill_tree(self, path: str, listings: dict, keep: dict | None = None):
         for d, entries in listings.items():
             if entries is None:
                 self._listings.pop(d, None)
@@ -1300,9 +1413,9 @@ class SftpExplorer(QWidget):
             f = self._cwd_item.font(COL_NAME)
             f.setBold(True)
             self._cwd_item.setFont(COL_NAME, f)
-            self._building += 1
-            self._cwd_item.setExpanded(True)
-            self._building -= 1
+            self._building += 1                 # the way to the current folder is open; the folder itself
+            self._cwd_item.setExpanded(keep is None or keep.get("cwd_open", True))   # stays folded on refresh
+            self._building -= 1                 # if it was picked with a click and not opened
         parent = self._cwd_item if self._cwd_item is not None else self.tree.invisibleRootItem()
         select = None
         for i in range(parent.childCount()):
@@ -1314,14 +1427,22 @@ class SftpExplorer(QWidget):
             it = self._find_item(d)
             if it is not None and d not in self._listings and self.browse:
                 self.browse.submit("expand", job_list(d, "expand"))
-        self._select_location(scroll_top=select is None)
+        self._pending_view = keep
+        if keep is not None:                    # a refresh: the user's selection and scroll stay as they were
+            if select is not None:              # ... unless it follows a new folder / rename: select that one
+                keep = dict(keep, selected=[select.data(0, Qt.ItemDataRole.UserRole)],
+                            current=select.data(0, Qt.ItemDataRole.UserRole))
+                self._pending_view = keep
+            self._restore_view(keep)
+        else:
+            self._select_location(scroll_top=select is None)
         if select is not None:
             self.tree.scrollToItem(select)          # keep the folder we came from in view
         self.info.setText(tr("{n} items", n=self.item_count()))
         self._update_nav_buttons()
         self._fit_name_column()
 
-    def _fill(self, path: str, entries):
+    def _fill(self, path: str, entries, keep: dict | None = None):
         self.cwd = path
         self._cwd_item = None
         self.path_edit.setText(path)
@@ -1338,6 +1459,8 @@ class SftpExplorer(QWidget):
                 select = it
         self.tree.setSortingEnabled(True)
         self._pending_select = None
+        if keep is not None:
+            self._restore_view(keep)
         if select:
             self.tree.setCurrentItem(select)
             self.tree.scrollToItem(select)
@@ -1370,6 +1493,11 @@ class SftpExplorer(QWidget):
 
     def open_remote(self, remote: str, choose: bool = False):
         """Download a remote file to a temp folder and open it. choose=True shows the Open-with dialog."""
+        if self.is_local:                   # this computer's file: open it where it is
+            native = self._native(remote)
+            if choose or not winopen.open_default(native):
+                winopen.open_with_dialog(native, int(self.window().winId()))
+            return
         if not self.transfer:
             return
         key = hashlib.sha1(f"{self.session_id}:{posixpath.dirname(remote)}".encode("utf-8")).hexdigest()[:10]
@@ -1444,6 +1572,15 @@ class SftpExplorer(QWidget):
             return
         self.transfer.submit("upload", job_upload(local_paths, remote_dir, skip))
 
+    def _on_remote_dropped(self, source, target):
+        """A server explorer's items were dropped here (this computer): it downloads them into the folder."""
+        folder = self.cwd
+        if target is not None and target.data(0, Qt.ItemDataRole.UserRole + 1):
+            folder = target.data(0, Qt.ItemDataRole.UserRole)
+        native = self._native(folder)
+        if native:
+            source._internal_drop = (native, self)
+
     def _on_dropped(self, paths: list, target):
         remote_dir = self.cwd
         if target is not None and target.data(0, Qt.ItemDataRole.UserRole + 1):
@@ -1454,6 +1591,18 @@ class SftpExplorer(QWidget):
     def _start_drag_out(self):
         sel = self.tree.selectedItems()
         if not sel or not self.transfer:
+            return
+        if self.is_local:                   # real files: any program (or a server's explorer) can take them
+            urls = [QUrl.fromLocalFile(self._native(it.data(0, Qt.ItemDataRole.UserRole))) for it in sel
+                    if it.data(0, Qt.ItemDataRole.UserRole) and self._native(it.data(0, Qt.ItemDataRole.UserRole))]
+            if not urls:
+                return
+            mime = QMimeData()
+            mime.setUrls(urls)
+            drag = QDrag(self.tree)
+            drag.setMimeData(mime)
+            drag.setPixmap(sel[0].icon(0).pixmap(QSize(32, 32)))
+            drag.exec(Qt.DropAction.CopyAction, Qt.DropAction.CopyAction)
             return
         remote, items = [], []
         for it in sel:
@@ -1472,7 +1621,16 @@ class SftpExplorer(QWidget):
         drag = QDrag(self.tree)
         drag.setMimeData(mime)
         drag.setPixmap(sel[0].icon(0).pixmap(QSize(32, 32)))
+        self._internal_drop = None
         result = drag.exec(Qt.DropAction.CopyAction, Qt.DropAction.CopyAction)
+        if self._internal_drop is not None:     # dropped on a local terminal's explorer: download straight there
+            dragout.cleanup_staging(staging)
+            folder, target = self._internal_drop
+            self._internal_drop = None
+            self._refresh_after_download = target
+            log.info("drag-out: dropped on this computer's explorer at %s (%d items)", folder, len(remote))
+            self.transfer.submit("download", job_download(remote, folder, confirm_limits(self.settings)))
+            return
         if result == Qt.DropAction.IgnoreAction:
             dragout.cleanup_staging(staging)
             return
@@ -1537,6 +1695,9 @@ class SftpExplorer(QWidget):
         paths = self._selected_paths()
         if not paths or not self.browse:
             return
+        if self.is_local:
+            self._trash(paths)
+            return
         names = "\n".join(posixpath.basename(p) for p in paths[:10])
         more = "\n" + tr("… and {n} more", n=len(paths) - 10) if len(paths) > 10 else ""
         r = QMessageBox.warning(self, tr("Confirm delete"),
@@ -1547,6 +1708,76 @@ class SftpExplorer(QWidget):
                                 QMessageBox.StandardButton.No)
         if r == QMessageBox.StandardButton.Yes:
             self.browse.submit("delete", job_delete(paths))
+
+    def _trash(self, paths: list[str]):
+        """This computer's files go to the Recycle Bin (Trash), never deleted outright."""
+        from PySide6.QtCore import QFile
+        names = "\n".join(posixpath.basename(p) for p in paths[:10])
+        more = "\n" + tr("… and {n} more", n=len(paths) - 10) if len(paths) > 10 else ""
+        win = sys.platform == "win32"
+        ask = (tr("Move these {n} items to the Recycle Bin?", n=len(paths)) if win
+               else tr("Move these {n} items to the Trash?", n=len(paths)))
+        r = QMessageBox.question(self, tr("Move to Recycle Bin") if win else tr("Move to Trash"),
+                                 ask + f"\n\n{names}{more}",
+                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                 QMessageBox.StandardButton.No)
+        if r != QMessageBox.StandardButton.Yes:
+            return
+        def to_trash(p):
+            r = QFile.moveToTrash(self._native(p))
+            return r[0] if isinstance(r, tuple) else bool(r)
+        failed = [p for p in paths if not to_trash(p)]
+        if failed:
+            QMessageBox.warning(self, tr("File operation failed"),
+                                tr("Could not move to the Recycle Bin:") + "\n" + "\n".join(self._native(p) for p in failed))
+        for p in paths:
+            self._listings.pop(p, None)
+            self._listings.pop(posixpath.dirname(p) or "/", None)   # the folder it was listed in
+        self.refresh()
+
+    def _watch_local(self) -> None:
+        """Watch the folders shown (current one and those opened) so changes made elsewhere — in the shell,
+        in Explorer/Finder — show up by themselves."""
+        if not self.is_local:
+            return
+        if self._dir_watch is None:
+            self._dir_watch = QFileSystemWatcher(self)
+            self._dir_watch.directoryChanged.connect(self._on_dir_changed)
+        want = {self._native(p) for p in ({self.cwd} | set(self._expanded)) if p}
+        want = {p for p in want if p and os.path.isdir(p)}
+        have = set(self._dir_watch.directories())
+        if have - want:
+            self._dir_watch.removePaths(list(have - want))
+        if want - have:
+            self._dir_watch.addPaths(list(want - have))
+
+    def _on_dir_changed(self, native: str):
+        from .localshell import to_virtual
+        self._changed_dirs.add(to_virtual(native))
+        self._watch_timer.start()                  # several changes at once: refresh once
+
+    def _local_changed(self):
+        changed, self._changed_dirs = self._changed_dirs, set()
+        if not self.browse or not self.cwd:
+            return
+        for d in changed:
+            self._listings.pop(d, None)
+        self.refresh()
+
+    def reveal(self, path: str):
+        """Show an item of this computer in Explorer / Finder."""
+        import subprocess
+        native = self._native(path)
+        try:
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer.exe", "/select,", native])
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", native])
+            else:
+                from PySide6.QtGui import QDesktopServices
+                QDesktopServices.openUrl(QUrl.fromLocalFile(os.path.dirname(native)))
+        except OSError as e:
+            QMessageBox.warning(self, tr("File operation failed"), str(e))
 
     def cd_here(self, path: str | None = None):
         target = path if isinstance(path, str) and path else self.cwd
@@ -1566,17 +1797,24 @@ class SftpExplorer(QWidget):
                 m.addAction(tr("Open with…"), lambda: self.open_remote(path, choose=True))
             if is_dir:
                 m.addAction(tr("Go to this folder in the terminal (cd)"), lambda: self.cd_here(path))
-            m.addAction(tr("Download…"), self.download_selected)
+            local = self.is_local
+            shown = self._native(path) if local else path
+            if local:
+                m.addAction(tr("Show in {fm}", fm=paths.file_manager_name()), lambda: self.reveal(path))
+            else:
+                m.addAction(tr("Download…"), self.download_selected)
             m.addSeparator()
             m.addAction(tr("Rename (F2)"), self.rename_selected)
             m.addAction(tr("Delete (Del)"), self.delete_selected)
             m.addSeparator()
-            m.addAction(tr("Copy path"), lambda: QGuiApplication.clipboard().setText(path))
+            m.addAction(tr("Copy path"), lambda: QGuiApplication.clipboard().setText(shown))
             m.addAction(tr("Copy name"), lambda: QGuiApplication.clipboard().setText(posixpath.basename(path)))
             m.addSeparator()
-        m.addAction(tr("Upload…"), self.upload_dialog)
+        if not self.is_local:
+            m.addAction(tr("Upload…"), self.upload_dialog)
         m.addAction(tr("New folder…"), self.new_folder)
-        m.addAction(tr("Copy current path"), lambda: QGuiApplication.clipboard().setText(self.cwd))
+        current = self._native(self.cwd) if self.is_local else self.cwd
+        m.addAction(tr("Copy current path"), lambda: QGuiApplication.clipboard().setText(current))
         m.addAction(tr("Go to the current folder in the terminal (cd)"), self.cd_here)
         m.addAction(tr("Refresh (F5)"), self.refresh)
         m.exec(self.tree.viewport().mapToGlobal(pos))

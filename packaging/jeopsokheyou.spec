@@ -30,11 +30,22 @@ excludes = [
     "PySide6.QtSerialPort", "PySide6.QtDesigner", "PySide6.QtHelp", "PySide6.QtTest",
 ]
 
+# Local terminals on Windows: pywinpty's native module and the console host it starts (ConPTY / winpty)
+binaries = []
+hiddenimports = ["yaml"]
+if WINDOWS:
+    import winpty
+    _wp = os.path.dirname(winpty.__file__)
+    binaries += [(os.path.join(_wp, f), "winpty") for f in os.listdir(_wp)
+                 if f.lower().endswith((".dll", ".exe", ".pyd"))]
+    hiddenimports += ["winpty", "winpty._winpty", "winpty.enums", "winpty.ptyprocess"]
+
 a = Analysis(  # noqa: F821
     [os.path.join(ROOT, "main.py")],
     pathex=[ROOT],
     datas=datas,
-    hiddenimports=["yaml"],
+    binaries=binaries,
+    hiddenimports=hiddenimports,
     excludes=excludes,
     noarchive=False,
 )

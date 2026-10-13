@@ -197,6 +197,12 @@ QToolButton:hover {{ background: {t.hover}; }}
 QToolButton:pressed {{ background: {t.sep}; }}
 QToolButton:checked {{ background: {t.hover}; color: {t.accent}; }}
 QToolButton:disabled {{ color: {t.faint}; }}
+QToolButton[popupMode="1"] {{ padding-right: 14px; }}
+QToolButton::menu-button {{ border: none; background: transparent; width: 14px; border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px; }}
+QToolButton::menu-button:hover {{ background: {t.sep}; }}
+QToolButton::menu-arrow {{ image: url({combo_arrow}); width: 10px; height: 10px; }}
+QToolButton::menu-arrow:open {{ top: 1px; }}
 
 /* input fields / buttons */
 QLineEdit, QSpinBox, QComboBox {{

@@ -15,6 +15,7 @@ from .paths import IS_MAC
 # id: (Windows keys, macOS keys) — the first one is shown in menus
 KEYS: dict[str, tuple[list[str], list[str]]] = {
     "new_session": (["Ctrl+Shift+N"], ["Ctrl+Shift+N"]),
+    "local_terminal": (["Ctrl+Shift+`"], ["Ctrl+Shift+`"]),
     "quick_connect": (["Ctrl+Shift+Q"], ["Ctrl+L"]),             # ⌘⇧Q logs out of macOS
     "lock": (["Ctrl+Shift+L"], ["Ctrl+Shift+L"]),
     "split_lr": (["Alt+Shift+=", "Alt+Shift++", "Ctrl+Shift+D"], ["Ctrl+D"]),
@@ -39,7 +40,7 @@ for _n in range(1, 10):                                          # go to tab 1-9
 
 # Help > Keyboard shortcuts: (section, label, shortcut id) — labels are translated when shown
 SECTIONS = [
-    ("Connections", [("New session", "new_session"), ("Quick connect", "quick_connect"),
+    ("Connections", [("New session", "new_session"), ("New local terminal", "local_terminal"), ("Quick connect", "quick_connect"),
                      ("Lock saved passwords", "lock")]),
     ("Tabs and split panes", [("Split left/right", "split_lr"), ("Split top/bottom", "split_tb"),
                               ("Duplicate tab (new connection to the same server)", "duplicate_tab"),
