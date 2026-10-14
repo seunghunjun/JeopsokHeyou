@@ -30,6 +30,16 @@ asked, answer = [], [None]          # the password box: what it was asked, what 
 dialogs_mod.ask_password_saving = lambda parent, label, s, store=None: (asked.append(label), answer[0])[1]
 
 
+def _app_log() -> str:
+    import glob as _g
+    for f in _g.glob(os.path.join(os.environ["APPDATA"], "JeopsokHeyou", "**", "app.log"), recursive=True) +             _g.glob(os.path.join(os.environ["HOME"], "Library", "Logs", "JeopsokHeyou", "app.log")):
+        try:
+            return " | ".join(open(f, encoding="utf-8", errors="replace").read().splitlines()[-12:])
+        except OSError:
+            pass
+    return "no app.log"
+
+
 def check(name, ok, extra=""):
     print(("PASS " if ok else "FAIL ") + name, extra)
 
@@ -121,7 +131,9 @@ try:
                                                         and ex.cwd == "/home/tester" and ex.item_count() >= 1, 15),
           (ex.cwd, ex.is_local, tab.remote_label.text(), tab._remote and {k: tab._remote[k] for k in
                                                                             ("waiting", "try_keys", "where")},
-           tab._remote and tab._remote["conn"] is not None, pane.remote_host, ex.info.text()))
+           tab._remote and tab._remote["conn"] is not None, pane.remote_host, ex.info.text(),
+           ex.browse is not None and ex.browse.isRunning(), ex.browse is not None and ex.browse.sftp is not None,
+           ex.browse is not None and ex.browse.q.qsize(), _app_log()))
     check("... the path bar says which server", "tester@127.0.0.1" in ex.path_edit.root_label, ex.path_edit.root_label)
     check("the host that worked is saved", any(x.host == "127.0.0.1" and x.port == 2299 and x.user == "tester"
                                                for x in w.store.sessions))
