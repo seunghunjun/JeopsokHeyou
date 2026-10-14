@@ -68,6 +68,15 @@ try:
     check("the terminal ends up there too", wait(lambda: pane.cwd == "/home/tester/logs", 20), pane.cwd)
     wait(lambda: False, 2)
     check("the late answers never pulled the explorer back", ex.cwd == "/home/tester/logs", ex.cwd)
+    # an earlier report arriving right after our cd is not taken as its answer
+    import time as _t
+    pane._cd_expect = ("/home/tester/app", _t.monotonic())
+    tab._pane_cwd(pane, "/home/tester")
+    check("a late, earlier report doesn't move the explorer", wait(lambda: False, 0.3) or ex.cwd == "/home/tester/logs",
+          ex.cwd)
+    tab._pane_cwd(pane, "/home/tester/app")
+    check("the cd's own answer is followed", wait(lambda: ex.cwd == "/home/tester/app", 10) and pane._cd_expect is None,
+          ex.cwd)
     w.settings["confirm_quit"] = False
     w.close()
 finally:

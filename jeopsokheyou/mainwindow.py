@@ -246,6 +246,7 @@ class TerminalPane(TerminalWidget):
             return "unsupported"
         self.at_prompt = False
         self._cd_sent = path
+        self._cd_expect = (path, time.monotonic())    # the answer to this cd reports this folder
         self._hide_and_send("cd", line)
         return "sent"
 
@@ -588,7 +589,8 @@ class SessionTab(QWidget):
             pane.window().active_pane = pane
         # In split view, clicking another terminal moves the explorer to that terminal's location — not while
         # this terminal is still on its way to where the explorer just went (its location is out of date)
-        catching_up = pane._pending_cd or pane._hiding == "cd" or pane._late_cd is not None
+        catching_up = (pane._pending_cd or pane._hiding == "cd" or pane._late_cd is not None
+                       or getattr(pane, "_cd_expect", None) is not None)
         if pane.cwd and not catching_up:
             ex.follow(pane.cwd, from_terminal=False)
 
@@ -597,6 +599,12 @@ class SessionTab(QWidget):
         # catching up with an earlier one: following it would pull the explorer back. The same goes for a
         # report that arrives while the app's own cd is still on its way (its answer is read after that).
         ex = self._explorer_for(pane)
+        expect = getattr(pane, "_cd_expect", None)
+        if expect is not None:
+            if path == expect[0] or time.monotonic() - expect[1] > 5:
+                pane._cd_expect = None                 # the answer to our cd (or it is long gone)
+            else:
+                return                                 # an earlier report arriving late: not where it is going
         if pane is self._terminal_for(ex) and not pane._pending_cd and not pane._hiding:
             ex.follow(path)
 
