@@ -24,6 +24,7 @@ log = applog.get("local")
 
 class LocalPane(TerminalPane):
     """A terminal running a shell of this computer."""
+    hide_echo = not localshell.IS_WIN       # ConPTY keeps its own screen: the explorer's cd is shown, not erased
 
     def __init__(self, font, settings, session: Session, profile: localshell.ShellProfile):
         super().__init__(font, settings, session)
@@ -64,6 +65,14 @@ class LocalPane(TerminalPane):
 
     def cd_command(self, path: str) -> str | None:
         return localshell.cd_line(self.profile, path)
+
+    def _emit_resize(self) -> None:
+        rows, cols = self._want_size
+        if localshell.IS_WIN and (cols < 20 or rows < 3):
+            # a passing size while the window is laid out: ConPTY would wrap its own copy of the screen to it and
+            # the two copies would no longer match (input drawn in the wrong place)
+            return
+        super()._emit_resize()
 
     def shown_cwd(self) -> str:
         return self.reported or self.cwd

@@ -121,6 +121,18 @@ pane.send_text(("cd sub" if WIN else "cd sub") + "\r")
 check("cd in the shell moves the explorer", wait(lambda: ex.cwd == vroot + "/sub", 15), ex.cwd)
 ex.navigate(vroot + "/renamed")
 check("opening a folder in the explorer moves the shell", wait(lambda: pane.cwd == vroot + "/renamed", 15), pane.cwd)
+if WIN:
+    # typing after the explorer moved the shell: the letters land right after the prompt (the console host keeps
+    # its own copy of the screen, so the app's cd must not be erased from ours)
+    wait(lambda: False, 0.5)
+    pane.send_text("echo typed")
+    def typed_row():                    # the cursor's line with the one before (a long prompt wraps)
+        s = pane.screen
+        y = s.cursor.y
+        return (s.display[y - 1] if y else "") + s.display[y].rstrip()
+    check("typing after a move lands after the prompt", wait(lambda: typed_row().endswith(">echo typed"), 5),
+          [l.rstrip() for l in pane.screen.display if l.strip()][-8:] + [pane.screen.cursor.x, pane.screen.cursor.y])
+    pane.send_text("" * len("echo typed"))
 check("the title bar shows the shell's own path", (to_native(vroot + "/renamed") if WIN else vroot + "/renamed")
       in pane.frame.bar._full, pane.frame.bar._full)
 

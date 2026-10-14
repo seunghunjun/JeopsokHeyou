@@ -40,6 +40,9 @@ OSC7_MARK = "\x1b]7;"
 
 class TerminalPane(TerminalWidget):
     """Terminal bound to a single shell channel."""
+    # The app's own commands (folder hook, cd) are hidden by holding back their echo and erasing it. Not where a
+    # console host keeps its own copy of the screen (ConPTY on Windows): it would draw later input in the wrong place.
+    hide_echo = True
     closed = Signal(object)
     focused = Signal(object)
     close_requested = Signal(object)
@@ -142,6 +145,23 @@ class TerminalPane(TerminalWidget):
         if not self._hiding:
             self.feed(data)
             return
+        if not self.hide_echo:
+            # show everything as it comes; only watch for the folder report that ends the app's command
+            self._swallow = (self._swallow + data)[-4096:]
+            if OSC7_MARK not in self._swallow.decode(self.encoding, errors="replace"):
+                self._swallow_timeout.start()
+                self.feed(data)
+                return
+            kind, self._hiding = self._hiding, None
+            self._swallow_timeout.stop()
+            self._swallow = b""
+            if kind == "inject":
+                self._inject_state = "done"
+            self.feed(data)
+            if self._pending_cd:
+                path, self._pending_cd = self._pending_cd, None
+                self.sync_cd(path)
+            return
         self._swallow += data
         if len(self._swallow) > 65536 or time.monotonic() - self._swallow_since > 10:
             self._flush_swallow()   # Safety net: if the marker never arrives, show the output as is
@@ -209,7 +229,7 @@ class TerminalPane(TerminalWidget):
         self._hiding = None
         self._pending_cd = None
         data, self._swallow = self._swallow, b""
-        if data:
+        if data and self.hide_echo:            # (otherwise it was shown already)
             self.feed(data)
 
     def _on_osc7(self, path: str) -> None:
