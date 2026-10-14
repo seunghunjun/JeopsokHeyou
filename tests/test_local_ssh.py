@@ -131,53 +131,58 @@ pane._on_osc7(pane.reported or "C:\\")
 check("back here: banner gone, sync again", pane.remote_host == "" and not tab.remote_banner.isVisible())
 
 # ---- the explorer follows the terminal onto a server (fake server: its own SFTP login)
-import subprocess  # noqa: E402
-sys.path.insert(0, TESTS)
-from _util import stop_server  # noqa: E402
-srv_root = os.path.join(SP, "srv")
-os.makedirs(os.path.join(srv_root, "home", "tester", "app"))
-srv = subprocess.Popen([sys.executable, os.path.join(TESTS, "fake_server.py"), "2299", srv_root], stdout=subprocess.PIPE,
-                       env=dict(os.environ, FAKE_LOG=os.path.join(SP, "server.log")))
-srv.stdout.readline()
-asked.clear()
-answer[0] = "pw"
-try:
-    pane.at_prompt = True
-    pane.feed(b"\r\n$ ssh -p 2299 tester@127.0.0.1")
-    pane._note_user_input("\r")
-    check("a new host: no password box while the terminal's own login runs", not asked and tab._remote is not None
-          and tab._remote["waiting"])
-    pane._on_osc7("file://fakehost/home/tester")        # the server's prompt: its login is done
-    check("... then it asks once", len(asked) == 1, asked)
-    check("the explorer shows the server's files", wait(lambda: ex.conn is not None and not ex.is_local
-                                                        and ex.cwd == "/home/tester" and ex.item_count() >= 1, 15),
-          lambda: (ex.cwd, ex.is_local, tab.remote_label.text(), tab._remote and {k: tab._remote[k] for k in
-                                                                            ("waiting", "try_keys", "where")},
-           tab._remote and tab._remote["conn"] is not None, pane.remote_host, ex.info.text(),
-           ex.browse is not None and ex.browse.isRunning(), ex.browse is not None and ex.browse.sftp is not None,
-           ex.browse is not None and ex.browse.q.qsize(), _stacks(), _server_log()))
-    check("... the path bar says which server", "tester@127.0.0.1" in ex.path_edit.root_label, ex.path_edit.root_label)
-    check("the host that worked is saved", any(x.host == "127.0.0.1" and x.port == 2299 and x.user == "tester"
-                                               for x in w.store.sessions))
-    pane._on_osc7("file://fakehost/home/tester/app")
-    check("cd on the server: the explorer follows", wait(lambda: ex.cwd == "/home/tester/app", 10),
-          ex.cwd)
-    check("the terminal (on the server) is not typed into", pane.sync_cd("/home/tester") == "remote")
-    pane._on_osc7(pane.reported or "C:\\")                # exit: this computer's prompt again
-    check("leaving the server: the explorer shows this computer again", wait(lambda: ex.is_local and ex.cwd == here, 10)
-          and tab._remote is None, (ex.cwd, ex.is_local))
-    # the next time: saved, so no question
+from jeopsokheyou import localtab as _lt  # noqa: E402
+if _lt.FOLLOW_SSH:                    # Windows only for now (see localtab.FOLLOW_SSH)
+    import subprocess  # noqa: E402
+    sys.path.insert(0, TESTS)
+    from _util import stop_server  # noqa: E402
+    srv_root = os.path.join(SP, "srv")
+    os.makedirs(os.path.join(srv_root, "home", "tester", "app"))
+    srv = subprocess.Popen([sys.executable, os.path.join(TESTS, "fake_server.py"), "2299", srv_root], stdout=subprocess.PIPE,
+                           env=dict(os.environ, FAKE_LOG=os.path.join(SP, "server.log")))
+    srv.stdout.readline()
     asked.clear()
-    pane.at_prompt = True
-    pane.feed(b"\r\n$ ssh -p 2299 tester@127.0.0.1")
-    pane._note_user_input("\r")
-    check("a saved host opens by itself", wait(lambda: ex.conn is not None and not ex.is_local
-                                                and ex.cwd == "/home/tester", 15) and not asked, (ex.cwd, asked))
-    pane._on_osc7(pane.reported or "C:\\")
-    wait(lambda: ex.is_local, 10)
-finally:
-    stop_server(srv)
+    answer[0] = "pw"
+    try:
+        pane.at_prompt = True
+        pane.feed(b"\r\n$ ssh -p 2299 tester@127.0.0.1")
+        pane._note_user_input("\r")
+        check("a new host: no password box while the terminal's own login runs", not asked and tab._remote is not None
+              and tab._remote["waiting"])
+        pane._on_osc7("file://fakehost/home/tester")        # the server's prompt: its login is done
+        check("... then it asks once", len(asked) == 1, asked)
+        check("the explorer shows the server's files", wait(lambda: ex.conn is not None and not ex.is_local
+                                                            and ex.cwd == "/home/tester" and ex.item_count() >= 1, 15),
+              lambda: (ex.cwd, ex.is_local, tab.remote_label.text(), tab._remote and {k: tab._remote[k] for k in
+                                                                                ("waiting", "try_keys", "where")},
+               tab._remote and tab._remote["conn"] is not None, pane.remote_host, ex.info.text(),
+               ex.browse is not None and ex.browse.isRunning(), ex.browse is not None and ex.browse.sftp is not None,
+               ex.browse is not None and ex.browse.q.qsize(), _stacks(), _server_log()))
+        check("... the path bar says which server", "tester@127.0.0.1" in ex.path_edit.root_label, ex.path_edit.root_label)
+        check("the host that worked is saved", any(x.host == "127.0.0.1" and x.port == 2299 and x.user == "tester"
+                                                   for x in w.store.sessions))
+        pane._on_osc7("file://fakehost/home/tester/app")
+        check("cd on the server: the explorer follows", wait(lambda: ex.cwd == "/home/tester/app", 10),
+              ex.cwd)
+        check("the terminal (on the server) is not typed into", pane.sync_cd("/home/tester") == "remote")
+        pane._on_osc7(pane.reported or "C:\\")                # exit: this computer's prompt again
+        check("leaving the server: the explorer shows this computer again", wait(lambda: ex.is_local and ex.cwd == here, 10)
+              and tab._remote is None, (ex.cwd, ex.is_local))
+        # the next time: saved, so no question
+        asked.clear()
+        pane.at_prompt = True
+        pane.feed(b"\r\n$ ssh -p 2299 tester@127.0.0.1")
+        pane._note_user_input("\r")
+        check("a saved host opens by itself", wait(lambda: ex.conn is not None and not ex.is_local
+                                                    and ex.cwd == "/home/tester", 15) and not asked, (ex.cwd, asked))
+        pane._on_osc7(pane.reported or "C:\\")
+        wait(lambda: ex.is_local, 10)
+    finally:
+        stop_server(srv)
 
+
+else:
+    check("macOS: the explorer stays on this computer (follows ssh on Windows only)", not _lt.FOLLOW_SSH)
 # ---- Home buttons
 tb_buttons = [b.toolTip() for b in w.main_toolbar.findChildren(QToolButton)]
 check("main toolbar: no Home button (the Home tab is there)", not any(t.startswith("Home") for t in tb_buttons),

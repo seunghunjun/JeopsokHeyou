@@ -24,6 +24,10 @@ from .mainwindow import SessionTab, TerminalPane
 from .ssh import ConnectWorker, ShellReader, SshConnection
 
 log = applog.get("local")
+# The explorer follows an ssh run in a local terminal onto that server. Windows only for now: on macOS the
+# explorer's first listing over that connection did not come back in CI (not seen on a real Mac yet), so there
+# the explorer stays on this computer (the terminal is still never typed into while it is on the server).
+FOLLOW_SSH = localshell.IS_WIN
 
 
 class LocalPane(TerminalPane):
@@ -179,7 +183,7 @@ class LocalSessionTab(SessionTab):
             self.remote_label.setText(tr("The terminal is connected to {host}. The explorer shows this computer, "
                                          "and the terminal is not moved while it is there.", host=shown))
             b.show()
-            if self._explorer_for(pane) is self.explorer:
+            if FOLLOW_SSH and self._explorer_for(pane) is self.explorer:
                 self._start_remote(pane)
         elif not any(getattr(p, "remote_host", "") for p in self.panes):
             b.hide()
