@@ -86,17 +86,27 @@ def shell(ch):
         if out: ch.send(out)
 class H(SFTPHandle):
     def stat(self): return SFTPAttributes.from_stat(os.fstat(self.readfile.fileno()))
+def _log(msg):
+    path = os.environ.get("FAKE_LOG")
+    if path:
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"{time.time():.2f} {msg}\n")
 class S(SFTPServerInterface):
+    def session_started(self): _log("sftp session started")
+    def session_ended(self): _log("sftp session ended")
     def _p(self, p): return os.path.join(ROOT, self.canonicalize(p).lstrip("/"))
     def canonicalize(self, p):
         if not p.startswith("/"): p = "/home/tester/" + ("" if p == "." else p)
         return os.path.normpath(p).replace("\\", "/")
     def list_folder(self, p):
+        _log(f"list {p}")
         rp = self._p(p); out=[]
         for f in os.listdir(rp):
             a = SFTPAttributes.from_stat(os.stat(os.path.join(rp, f))); a.filename = f; out.append(a)
         return out
-    def stat(self, p): return SFTPAttributes.from_stat(os.stat(self._p(p)))
+    def stat(self, p):
+        _log(f"stat {p}")
+        return SFTPAttributes.from_stat(os.stat(self._p(p)))
     lstat = stat
     def open(self, p, flags, attr):
         rp = self._p(p)

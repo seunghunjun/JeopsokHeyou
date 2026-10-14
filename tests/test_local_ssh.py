@@ -30,6 +30,13 @@ asked, answer = [], [None]          # the password box: what it was asked, what 
 dialogs_mod.ask_password_saving = lambda parent, label, s, store=None: (asked.append(label), answer[0])[1]
 
 
+def _server_log() -> str:
+    try:
+        return " | ".join(open(os.path.join(SP, "server.log"), encoding="utf-8").read().splitlines()[-15:])
+    except OSError:
+        return "no server log"
+
+
 def _stacks() -> str:
     """Where every thread is (only the frames of the app and paramiko), on one line."""
     import traceback
@@ -53,6 +60,8 @@ def _app_log() -> str:
 
 
 def check(name, ok, extra=""):
+    if callable(extra):                  # details computed (and printed) only when the check fails
+        extra = "" if ok else extra()
     print(("PASS " if ok else "FAIL ") + name, extra)
 
 
@@ -127,7 +136,8 @@ sys.path.insert(0, TESTS)
 from _util import stop_server  # noqa: E402
 srv_root = os.path.join(SP, "srv")
 os.makedirs(os.path.join(srv_root, "home", "tester", "app"))
-srv = subprocess.Popen([sys.executable, os.path.join(TESTS, "fake_server.py"), "2299", srv_root], stdout=subprocess.PIPE)
+srv = subprocess.Popen([sys.executable, os.path.join(TESTS, "fake_server.py"), "2299", srv_root], stdout=subprocess.PIPE,
+                       env=dict(os.environ, FAKE_LOG=os.path.join(SP, "server.log")))
 srv.stdout.readline()
 asked.clear()
 answer[0] = "pw"
@@ -141,11 +151,11 @@ try:
     check("... then it asks once", len(asked) == 1, asked)
     check("the explorer shows the server's files", wait(lambda: ex.conn is not None and not ex.is_local
                                                         and ex.cwd == "/home/tester" and ex.item_count() >= 1, 15),
-          (ex.cwd, ex.is_local, tab.remote_label.text(), tab._remote and {k: tab._remote[k] for k in
+          lambda: (ex.cwd, ex.is_local, tab.remote_label.text(), tab._remote and {k: tab._remote[k] for k in
                                                                             ("waiting", "try_keys", "where")},
            tab._remote and tab._remote["conn"] is not None, pane.remote_host, ex.info.text(),
            ex.browse is not None and ex.browse.isRunning(), ex.browse is not None and ex.browse.sftp is not None,
-           ex.browse is not None and ex.browse.q.qsize(), _stacks()))
+           ex.browse is not None and ex.browse.q.qsize(), _stacks(), _server_log()))
     check("... the path bar says which server", "tester@127.0.0.1" in ex.path_edit.root_label, ex.path_edit.root_label)
     check("the host that worked is saved", any(x.host == "127.0.0.1" and x.port == 2299 and x.user == "tester"
                                                for x in w.store.sessions))
