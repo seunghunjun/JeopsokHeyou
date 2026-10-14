@@ -71,6 +71,9 @@ w.open_local(localshell.default_profile({}))
 tab = w.current_tab()
 pane, ex = tab.panes[0], tab.explorer
 check("local shell ready", wait(lambda: pane.cwd != "" and ex.cwd == pane.cwd, 20), pane.cwd)
+# bash/zsh get the folder hook typed in after they start; let that finish (its report would mean "back here")
+wait(lambda: pane._inject_state in ("done", "off") and not pane._hiding, 20)
+wait(lambda: False, 1.0)
 here = pane.cwd
 
 # the user types an ssh command and presses Enter (not run here: only the screen line is read)
