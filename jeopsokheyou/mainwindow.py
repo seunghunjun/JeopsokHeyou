@@ -437,7 +437,16 @@ class SessionTab(QWidget):
         # (the explorer is hidden with View > Show/hide SFTP explorer, Ctrl+Shift+B).
         self.split.setCollapsible(0, False)
         self.split.setCollapsible(1, False)
-        lay.addWidget(self.split)
+        self.explorer_strip = detach.explorer_strip(lambda: self.main.toggle_explorer())
+        self.explorer.visibility_set.connect(lambda shown: self.explorer_strip.setVisible(not shown))
+        self.explorer.hide_requested.connect(lambda: self.main.toggle_explorer())
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(0)
+        rl.addWidget(self.explorer_strip)
+        rl.addWidget(self.split, 1)
+        lay.addWidget(row, 1)                  # the terminals take the room; banners above only their own height
         self._add_pane()
 
     # ------------------------------------------------------------ pane
@@ -634,6 +643,7 @@ class SessionTab(QWidget):
         "busy": "A command is running in the terminal, so the terminal location was left unchanged",
         "typing": "A command is being typed in the terminal, so the terminal location was left unchanged",
         "unsupported": "This shell does not support location sync (bash/zsh required) — use the 'Move the terminal to this folder' button",
+        "remote": "The terminal is connected to another computer, so its location was left unchanged",
     }
 
     def _sync_terminal(self, path: str, explorer=None):
@@ -1225,7 +1235,7 @@ class MainWindow(QMainWindow):
         tb.setMovable(False)
         tb.setIconSize(QSize(18, 18))
 
-        self.home_btn = self._toolbar_buttons(tb)
+        self.home_btn = self._toolbar_buttons(tb, home=False)    # the Home tab is always there
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         tb.addWidget(spacer)
@@ -1236,8 +1246,12 @@ class MainWindow(QMainWindow):
         self.quick.returnPressed.connect(self.quick_connect)
         tb.addWidget(self.quick)
         self.addToolBar(tb)
+        self._toolbars = [tb]
+        tb.setVisible(bool(self.settings.get("show_toolbar", True)))
+        # unchecking it from the right-click menu is the same setting
+        tb.toggleViewAction().triggered.connect(lambda on: self.set_toolbar_shown(on))
 
-    def _toolbar_buttons(self, tb: QToolBar) -> QToolButton:
+    def _toolbar_buttons(self, tb: QToolBar, home: bool = True) -> QToolButton | None:
         """Home, new session, split and explorer buttons (they work on the window they are in)."""
         def tool(name, tip, slot):
             b = QToolButton()
@@ -1249,7 +1263,7 @@ class MainWindow(QMainWindow):
             return b
         def tip(label, sid):
             return f"{tr(label)} ({shortcuts.text(sid, first_only=True)})"
-        home = tool("home", tip("Home", "home"), lambda: self.show_home())
+        home_btn = tool("home", tip("Home", "home"), lambda: self.show_home()) if home else None
         tool("plus", tip("New session", "new_session"), self.new_session)
         term = tool("terminal", tip("New local terminal", "local_terminal"), lambda: self.open_local())
         term.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
@@ -1259,8 +1273,7 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tool("split_h", tip("Split left/right", "split_lr"), lambda: self.split(Qt.Orientation.Horizontal))
         tool("split_v", tip("Split top/bottom", "split_tb"), lambda: self.split(Qt.Orientation.Vertical))
-        tool("explorer_panel", tip("Show/hide SFTP explorer", "explorer"), self.toggle_explorer)
-        return home
+        return home_btn
 
     def window_toolbar(self) -> QToolBar:
         """The main window's toolbar for a detached window."""
@@ -1285,7 +1298,23 @@ class MainWindow(QMainWindow):
             self.quick_connect()
         quick.returnPressed.connect(go)
         tb.addWidget(quick)
+        tb.setVisible(bool(self.settings.get("show_toolbar", True)))
+        tb.toggleViewAction().triggered.connect(lambda on: self.set_toolbar_shown(on))
+        self._toolbars.append(tb)
+        tb.destroyed.connect(lambda _o=None, tb=tb: self._toolbars.remove(tb) if tb in self._toolbars else None)
         return tb
+
+    def set_toolbar_shown(self, on: bool):
+        """View > Toolbar: the row of buttons on every window (more room for the terminals when off)."""
+        self.settings["show_toolbar"] = bool(on)
+        config.save_settings(self.settings)
+        for tb in list(self._toolbars):
+            try:
+                tb.setVisible(bool(on))
+            except RuntimeError:
+                self._toolbars.remove(tb)
+        if hasattr(self, "toolbar_act"):
+            self.toolbar_act.setChecked(bool(on))
 
     def _build_menu(self):
         mb = self.menuBar()
@@ -1331,6 +1360,11 @@ class MainWindow(QMainWindow):
         self.sessions_act.setShortcuts(shortcuts.keys("sessions_panel"))
         self.sessions_act.triggered.connect(lambda _c=False: self.toggle_sessions_panel())
         m.addAction(self.sessions_act)
+        self.toolbar_act = QAction(tr("Toolbar"), self)
+        self.toolbar_act.setCheckable(True)
+        self.toolbar_act.setChecked(bool(self.settings.get("show_toolbar", True)))
+        self.toolbar_act.triggered.connect(self.set_toolbar_shown)
+        m.addAction(self.toolbar_act)
         m.addSeparator()
         self._act(m, tr("Font…"), self.choose_font)
         self._act(m, tr("Larger text"), lambda: self.zoom_font(1), "zoom_in")

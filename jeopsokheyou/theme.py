@@ -265,6 +265,7 @@ QHeaderView::section:last {{ border-right: none; }}
 
 /* sidebar (sessions) — Finder sidebar */
 #Sidebar, #Sidebar QTreeView {{ background: {t.sidebar}; }}
+#ExplorerStrip {{ background: {t.sidebar}; border-right: 1px solid {t.sep}; }}
 #Sidebar QTreeView {{ show-decoration-selected: 0; padding: 2px 6px; }}
 #Sidebar QTreeView::item {{ min-height: 26px; border-radius: 6px; padding-left: 4px; }}
 #Sidebar QTreeView::item:first {{ border-top-right-radius: 0; border-bottom-right-radius: 0; }}

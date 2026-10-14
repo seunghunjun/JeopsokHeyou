@@ -30,11 +30,12 @@ LINE = {
     "download": '<path d="M12 4v11"/><path d="M7.5 10.5L12 15l4.5-4.5"/><path d="M4.5 15v3.5A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5V15"/>',
     "folder_plus": '<path d="M3.5 7.5A1.5 1.5 0 0 1 5 6h4l2 2h8a1.5 1.5 0 0 1 1.5 1.5v8A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/><path d="M12 11v5M9.5 13.5h5"/>',
     "terminal": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M7 9.5l3 2.5-3 2.5"/><path d="M12.5 15h4.5"/>',
+    # folder -> terminal: move the terminal to the explorer's folder (not "a new terminal")
+    "terminal_cd": '<path d="M3.5 6A1.5 1.5 0 0 1 5 4.5h3l1.5 1.5h4.5"/><path d="M12 7v5"/><path d="M9.5 9.5L12 12l2.5-2.5"/>'
+                   '<rect x="3" y="13" width="18" height="7.5" rx="2"/><path d="M6.5 15.5l2 1.5-2 1.5"/>',
     "split_h": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M12 4.5v15"/>',
     "split_v": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M3 12h18"/>',
     "sidebar": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M9 4.5v15"/>',
-    "explorer_panel": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M10.5 4.5v15"/>'
-                      '<path d="M5.5 9h2.5M5.5 12h2.5M5.5 15h2.5"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',
     "link": '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
     "server": '<rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01"/>',
@@ -46,6 +47,8 @@ LINE = {
     "search": '<circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l5 5"/>',
     "pencil": '<path d="M4 20l1-4.5L15.5 5a2 2 0 0 1 2.8 0l.7.7a2 2 0 0 1 0 2.8L8.5 19z"/><path d="M13.5 7l3.5 3.5"/>',
     "folder": '<path d="M3.5 7A1.5 1.5 0 0 1 5 5.5h4l2 2h8A1.5 1.5 0 0 1 20.5 9v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>',
+    "home_folder": '<path d="M3.5 7A1.5 1.5 0 0 1 5 5.5h4l2 2h8A1.5 1.5 0 0 1 20.5 9v8.5A1.5 1.5 0 0 1 19 19H5a1.5 1.5 0 0 1-1.5-1.5z"/>'
+                   '<path d="M8.8 13.2L12 10.6l3.2 2.6"/><path d="M9.8 12.4v3.8h4.4v-3.8"/>',
     "code": '<path d="M8.5 7.5L4 12l4.5 4.5"/><path d="M15.5 7.5L20 12l-4.5 4.5"/><path d="M13 5.5l-2 13"/>',
     "clock": '<circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/>',
     "gear": '<circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4L18 18M6 18l1.6-1.6M16.4 7.6L18 6"/>',

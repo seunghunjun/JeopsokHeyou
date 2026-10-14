@@ -603,5 +603,15 @@
   "Use by default": "既定にする",
   "found on this computer": "このコンピューターで検出",
   "your own": "自分で追加",
-  "Recently opened on this computer": "このコンピューターで最近開いたシェル"
+  "Recently opened on this computer": "このコンピューターで最近開いたシェル",
+  "Hide": "隠す",
+  "Home folder (~)": "ホームフォルダー (~)",
+  "The terminal is connected to another computer, so its location was left unchanged": "ターミナルが別のコンピューターに接続しているため、ターミナルの場所は変更しませんでした",
+  "The terminal is connected to {host}. The explorer shows this computer, and the terminal is not moved while it is there.": "ターミナルは {host} に接続しています。エクスプローラーはこのコンピューターを表示し、その間ターミナルの場所は変更しません。",
+  "Show explorer": "エクスプローラーを表示",
+  "Toolbar": "ツールバー",
+  "Opening {host} in the explorer…": "エクスプローラーで {host} に接続しています…",
+  "The terminal is connected to {host}. The explorer shows its files; it goes back to this computer when you leave it.": "ターミナルは {host} に接続しています。エクスプローラーはそのサーバーのファイルを表示し、接続を終えるとこのコンピューターに戻ります。",
+  "The explorer could not open {host}: {error}": "エクスプローラーで {host} を開けませんでした: {error}",
+  "Hide explorer": "エクスプローラーを折りたたむ"
 }

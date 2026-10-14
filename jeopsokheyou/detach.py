@@ -43,6 +43,25 @@ def add_shortcuts(window: QWidget, main) -> None:
             window.addAction(a)
 
 
+def explorer_strip(on_click) -> QWidget:
+    """The slim strip left of the terminals while the explorer is folded (like the folded session list):
+    its » button brings the explorer back."""
+    from . import icons
+    strip = QWidget()
+    strip.setObjectName("ExplorerStrip")
+    lay = QVBoxLayout(strip)
+    lay.setContentsMargins(4, 8, 4, 8)
+    b = QToolButton()
+    icons.bind(b, "sidebar")                    # the same button as the folded session list
+    b.setToolTip(tr("Show explorer"))
+    b.clicked.connect(on_click)
+    lay.addWidget(b)
+    lay.addStretch(1)
+    strip.button = b
+    strip.hide()
+    return strip
+
+
 def _copy_menu(src: QMenu, dst: QMenu) -> None:
     for a in src.actions():
         if a.isSeparator():
@@ -245,9 +264,19 @@ class PaneWindow(QWidget):
         self.body.setCollapsible(0, False)
         self.body.setCollapsible(1, False)
         self.body.setSizes([360, 700])
+        self.explorer_strip = explorer_strip(lambda: tab.main.toggle_explorer())
+        self.explorer_strip.setVisible(self.explorer.isHidden())
+        self.explorer.visibility_set.connect(lambda shown: self.explorer_strip.setVisible(not shown))
+        self.explorer.hide_requested.connect(lambda: tab.main.toggle_explorer())
         self.active_pane = None             # the terminal of this window the explorer goes with
         lay.addWidget(tab.main.window_toolbar())
-        lay.addWidget(self.body)
+        row = QWidget()
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(0, 0, 0, 0)
+        rl.setSpacing(0)
+        rl.addWidget(self.explorer_strip)
+        rl.addWidget(self.body, 1)
+        lay.addWidget(row, 1)
         self.setWindowTitle(f"{tab.session.title()} — JeopsokHeyou")
         self.setWindowIcon(tab.main.windowIcon())
         add_shortcuts(self, tab.main)
