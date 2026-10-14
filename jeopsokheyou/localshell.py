@@ -421,3 +421,89 @@ class _Closed:
 
     def cancel_io(self):
         return True
+
+
+# ---------------------------------------------------------------- ssh run inside a local shell
+_SSH_OPTS_WITH_ARG = set("BbcDEeFIiJLlmOoPpQRSWw")
+
+
+def parse_ssh_command(line: str) -> dict | None:
+    """``ssh [options] [user@]host [command]`` typed in a local shell -> {"user", "host", "port", "identity"}.
+    None when the line does not run ssh to a host."""
+    import re
+    import shlex
+    m = re.search(r"(?:^|[\s>$#%;&|(])ssh(?:\.exe)?\s+(.+)$", line.strip())
+    if not m:
+        return None
+    try:
+        args = shlex.split(m.group(1), posix=True)
+    except ValueError:
+        args = m.group(1).split()
+    out = {"user": "", "host": "", "port": 0, "identity": ""}
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            i += 1
+            break
+        if a.startswith("-") and len(a) > 1:
+            flag = a[1]
+            value = a[2:] if len(a) > 2 else (args[i + 1] if i + 1 < len(args) else "")
+            used = 0 if len(a) > 2 else 1
+            if flag in _SSH_OPTS_WITH_ARG:
+                if flag == "p":
+                    out["port"] = int(value) if value.isdigit() else 0
+                elif flag == "l":
+                    out["user"] = value
+                elif flag == "i":
+                    out["identity"] = value
+                i += 1 + used
+                continue
+            i += 1
+            continue
+        break
+    if i >= len(args):
+        return None
+    target = args[i]
+    if target.startswith("ssh://"):
+        target = target[6:]
+    if "@" in target:
+        user, _, target = target.rpartition("@")
+        out["user"] = out["user"] or user
+    if target.count(":") == 1 and target.rsplit(":", 1)[1].isdigit():
+        target, port = target.rsplit(":", 1)
+        out["port"] = out["port"] or int(port)
+    out["host"] = target.strip("[]")
+    return out if out["host"] else None
+
+
+def ssh_session(target: dict):
+    """A Session for an ssh target, filled in from ~/.ssh/config when the host is an alias there."""
+    from .config import Session
+    from . import sshconfig
+    host, user, port, identity = target["host"], target["user"], target["port"], target["identity"]
+    found = None
+    try:
+        for s in sshconfig.import_ssh_config():
+            if s.name == host:
+                found = s
+                break
+    except Exception:
+        found = None
+    if found is not None:
+        s = Session(name=host, host=found.host, port=port or found.port, user=user or found.user,
+                    auth=found.auth, key_path=found.key_path)
+    else:
+        s = Session(name=host, host=host, port=port or 22, user=user)
+    if identity:
+        s.auth, s.key_path = "key", os.path.expanduser(identity)
+    return s
+
+
+def is_this_computer(hostname: str) -> bool:
+    import socket
+    name = (hostname or "").strip().lower()
+    if name in ("", "localhost", "127.0.0.1", "::1"):
+        return True
+    me = socket.gethostname().lower()
+    return name in (me, me.split(".")[0]) or name.split(".")[0] == me.split(".")[0]

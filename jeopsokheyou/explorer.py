@@ -659,6 +659,8 @@ class SftpExplorer(QWidget):
     navigated = Signal(str)   # user changed folders in the explorer directly (for terminal sync)
     status = Signal(str)
     disk_updated = Signal(object)   # diskusage.Summary or None (server disk space, read once per connection)
+    hide_requested = Signal()       # its own fold button (top right): fold the explorer of this window
+    visibility_set = Signal(bool)   # shown / folded (the » strip next to the terminal shows when folded)
 
     def __init__(self, session_id: str, settings: dict, parent=None):
         super().__init__(parent)
@@ -700,6 +702,10 @@ class SftpExplorer(QWidget):
         self._watch_timer.timeout.connect(self._local_changed)
         self._build()
 
+    def setVisible(self, visible: bool) -> None:
+        super().setVisible(visible)
+        self.visibility_set.emit(bool(visible))
+
     @property
     def is_local(self) -> bool:
         """The explorer of a local terminal (this computer's files)."""
@@ -735,7 +741,7 @@ class SftpExplorer(QWidget):
         self.back_btn = btn("back", tr("Back"), self.go_back)
         self.fwd_btn = btn("forward", tr("Forward"), self.go_forward)
         btn("up", tr("Parent folder (Backspace)"), self.go_up)
-        btn("home", tr("Home folder"), lambda: self.navigate(self.home or "."))
+        btn("home_folder", tr("Home folder (~)"), lambda: self.navigate(self.home or "."))
         btn("refresh", tr("Refresh (F5)"), self.refresh)
         bar.addStretch(1)
         self.upload_btn = btn("upload", tr("Upload… (you can also drag files in from {fm})", fm=paths.file_manager_name()),
@@ -743,12 +749,15 @@ class SftpExplorer(QWidget):
         self.download_btn = btn("download", tr("Download… (you can also drag items out to {fm})", fm=paths.file_manager_name()),
                                 self.download_selected)
         btn("folder_plus", tr("New folder"), self.new_folder)
-        btn("terminal", tr("Move the terminal to this folder (cd)"), self.cd_here)
+        btn("terminal_cd", tr("Move the terminal to this folder (cd)"), self.cd_here)
         self.follow_chk = btn("link", "", lambda: None)
         self.follow_chk.setCheckable(True)
         self.follow_chk.setChecked(True)
         self.follow_chk.setToolTip(tr("Sync location — cd in the terminal moves the explorer, and changing folders in the explorer moves the terminal (bash/zsh)\n"
                                       "The terminal is left alone while a command is running or you are typing"))
+        from . import shortcuts
+        self.fold_btn = btn("sidebar", tr("Hide explorer") + f" ({shortcuts.text('explorer', first_only=True)})",
+                            self.hide_requested.emit)
         tl.addLayout(bar)
         self.path_edit = PathBar()
         self.path_edit.path_entered.connect(lambda p: self.navigate(p))
@@ -883,6 +892,10 @@ class SftpExplorer(QWidget):
         local = self.is_local
         self.upload_btn.setVisible(not local)
         self.download_btn.setVisible(not local)
+        if not local:                            # a server: plain paths (the explorer may have shown this PC before)
+            self.path_edit.root_label = "/"
+            self.path_edit.shown = lambda p: p
+            self.path_edit.typed = lambda t: t
         if local:
             from .localshell import IS_WIN, to_native, to_virtual
             if IS_WIN:

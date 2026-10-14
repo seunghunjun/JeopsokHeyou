@@ -603,5 +603,15 @@
   "Use by default": "기본으로 사용",
   "found on this computer": "내 컴퓨터에서 찾음",
   "your own": "직접 추가",
-  "Recently opened on this computer": "내 컴퓨터에서 최근에 연 셸"
+  "Recently opened on this computer": "내 컴퓨터에서 최근에 연 셸",
+  "Hide": "숨기기",
+  "Home folder (~)": "홈 폴더 (~)",
+  "The terminal is connected to another computer, so its location was left unchanged": "터미널이 다른 컴퓨터에 접속해 있어 터미널 위치를 바꾸지 않았습니다",
+  "The terminal is connected to {host}. The explorer shows this computer, and the terminal is not moved while it is there.": "터미널이 {host}에 접속해 있습니다. 탐색기는 내 컴퓨터를 보여 주며, 그동안 터미널 위치는 바꾸지 않습니다.",
+  "Show explorer": "탐색기 펼치기",
+  "Toolbar": "툴바",
+  "Opening {host} in the explorer…": "탐색기에서 {host}에 접속하는 중…",
+  "The terminal is connected to {host}. The explorer shows its files; it goes back to this computer when you leave it.": "터미널이 {host}에 접속해 있습니다. 탐색기는 그 서버의 파일을 보여 주며, 접속을 끝내면 내 컴퓨터로 돌아옵니다.",
+  "The explorer could not open {host}: {error}": "탐색기에서 {host}에 접속하지 못했습니다: {error}",
+  "Hide explorer": "탐색기 접기"
 }

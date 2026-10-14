@@ -220,8 +220,8 @@ w.open_session(lab)
 tab = w.current_tab()
 check("connected from Hosts", wait(lambda: tab.state == "connected"), tab.state)
 check("session list panel shown next to the terminal", w.sessions_dock.isVisible())
-w.home_btn.click()
-check("toolbar Home button goes to the start page", w.tabs.currentWidget() is w.home
+w.show_home()                        # View > Home (the main window's Home tab; no Home button on its toolbar)
+check("Home goes to the start page", w.tabs.currentWidget() is w.home
       and w.home.stack.currentWidget() is w.home.start)
 check("start page lists recent sessions", w.home.start.recent_grid.count() >= 1
       and w.home.start.recent_grid.itemAt(0).widget().text().startswith("lab"))
