@@ -601,10 +601,12 @@ class SessionTab(QWidget):
         ex = self._explorer_for(pane)
         expect = getattr(pane, "_cd_expect", None)
         if expect is not None:
-            if path == expect[0] or time.monotonic() - expect[1] > 5:
-                pane._cd_expect = None                 # the answer to our cd (or it is long gone)
-            else:
-                return                                 # an earlier report arriving late: not where it is going
+            if path == expect[0]:
+                pane._cd_expect = None
+                return              # the answer to the explorer's own cd: it only confirms; the explorer may have moved on
+            if time.monotonic() - expect[1] <= 5:
+                return              # an earlier report arriving late: not where it is going
+            pane._cd_expect = None  # long gone (the cd failed): follow the terminal again
         if pane is self._terminal_for(ex) and not pane._pending_cd and not pane._hiding:
             ex.follow(path)
 

@@ -965,6 +965,8 @@ class SftpExplorer(QWidget):
         self.info.setText(tr("Loading… {path}", path=path))
         if origin != "refresh":
             self._pending_view = None
+        # a folder the user opened here is on its way: the terminal's reports wait until it is shown
+        self._user_move = path if origin == "user" else None
         self._target = path   # so comparisons use the intended destination even before the listing arrives
         if origin != "refresh":
             self._expanded.clear()   # moving somewhere: only the way to the new folder stays open
@@ -1023,6 +1025,8 @@ class SftpExplorer(QWidget):
         """Terminal cwd change notification (OSC 7), or another pane picked (from_terminal=False)."""
         if not path or not self.follow_chk.isChecked():
             return
+        if from_terminal and getattr(self, "_user_move", None):
+            return              # the user's own move is still loading; the terminal is sent there next
         if path != (self._target or self.cwd):
             self.navigate(path, origin="follow")
 
@@ -1050,6 +1054,8 @@ class SftpExplorer(QWidget):
             self.disk_updated.emit(payload)
         elif tag == "list":
             path, entries, origin = payload
+            if origin == "user":
+                self._user_move = None          # the user's move is shown (its path may be written differently)
             if origin == "refresh" and path != self.cwd:
                 return              # the location changed while this refresh was on its way: it is stale
             keep = self._view_state() if origin == "refresh" and path == self.cwd else None
@@ -1117,6 +1123,7 @@ class SftpExplorer(QWidget):
         if tag in ("open", "open_with"):
             self._downloading.clear()
         if tag == "list":
+            self._user_move = None
             self._target = self.cwd   # drop the unreachable destination from the target
             self.path_edit.setText(self.cwd)
         if msg == CANCELLED:

@@ -75,8 +75,10 @@ try:
     check("a late, earlier report doesn't move the explorer", wait(lambda: False, 0.3) or ex.cwd == "/home/tester/logs",
           ex.cwd)
     tab._pane_cwd(pane, "/home/tester/app")
-    check("the cd's own answer is followed", wait(lambda: ex.cwd == "/home/tester/app", 10) and pane._cd_expect is None,
-          ex.cwd)
+    check("the cd's own answer only confirms it (the explorer may have moved on)",
+          wait(lambda: False, 0.3) or (ex.cwd == "/home/tester/logs" and pane._cd_expect is None), ex.cwd)
+    tab._pane_cwd(pane, "/etc")
+    check("after that the terminal leads again", wait(lambda: ex.cwd == "/etc", 10), ex.cwd)
     w.settings["confirm_quit"] = False
     w.close()
 finally:
