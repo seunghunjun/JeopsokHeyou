@@ -119,7 +119,9 @@ try:
     check("... then it asks once", len(asked) == 1, asked)
     check("the explorer shows the server's files", wait(lambda: ex.conn is not None and not ex.is_local
                                                         and ex.cwd == "/home/tester" and ex.item_count() >= 1, 15),
-          (ex.cwd, ex.is_local))
+          (ex.cwd, ex.is_local, tab.remote_label.text(), tab._remote and {k: tab._remote[k] for k in
+                                                                            ("waiting", "try_keys", "where")},
+           tab._remote and tab._remote["conn"] is not None, pane.remote_host, ex.info.text()))
     check("... the path bar says which server", "tester@127.0.0.1" in ex.path_edit.root_label, ex.path_edit.root_label)
     check("the host that worked is saved", any(x.host == "127.0.0.1" and x.port == 2299 and x.user == "tester"
                                                for x in w.store.sessions))
