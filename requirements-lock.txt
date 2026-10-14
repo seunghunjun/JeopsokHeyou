@@ -14,5 +14,5 @@ PySide6_Essentials==6.11.2
 pyte==0.8.2
 PyYAML==6.0.3
 pywinpty==3.0.5; sys_platform == "win32"
-shiboken6==6.11.2
+shiboken6==6.12.0
 wcwidth==0.9.1
