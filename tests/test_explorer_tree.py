@@ -90,8 +90,11 @@ try:
           and ex._find_item("/etc") is not None)
     check("the folder opened before stays open", ex._find_item("/home/tester/app").isExpanded())
     ex.go_up()
-    check("go up selects the new current folder", wait(lambda: ex.cwd == "/home/tester/app")
-          and wait(lambda: ex.tree.currentItem() is not None and ex.tree.currentItem().text(0) == "app"))
+    ok_up = wait(lambda: ex.cwd == "/home/tester/app")         and wait(lambda: ex.tree.currentItem() is not None and ex.tree.currentItem().text(0) == "app")
+    p0, cur = tab.active, ex.tree.currentItem()
+    check("go up selects the new current folder", ok_up,
+          (cur.text(0) if cur else None, [i.text(0) for i in ex.tree.selectedItems()], ex.cwd, ex._target, p0.cwd,
+           p0._pending_cd, p0._hiding, p0._late_cd, p0._inject_state, ex.history[-4:]))
 
     # going up to / still shows everything (it used to come out empty)
     ex.navigate("/home")
@@ -99,7 +102,10 @@ try:
     # let the terminal finish its own cd first (a slow machine would otherwise still be on the way)
     wait(lambda: tab.active is not None and tab.active.cwd == "/home" and not tab.active._hiding)
     ex.go_up()
-    check("up to / lists the root", wait(lambda: ex.cwd == "/" and ex.item_count() >= 2), ex.item_count())
+    ok_root = wait(lambda: ex.cwd == "/" and ex.item_count() >= 2)
+    p0 = tab.active
+    check("up to / lists the root", ok_root, (ex.item_count(), ex.cwd, ex._target, p0.cwd, p0._pending_cd,
+                                              p0._hiding, p0._late_cd, p0._inject_state, ex.history[-4:]))
     check("... and nothing is selected at /", not ex.tree.selectedItems())
     ex.refresh()
     check("refresh at / keeps the root", wait(lambda: ex.tree.topLevelItemCount() >= 2))

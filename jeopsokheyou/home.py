@@ -344,18 +344,29 @@ class WelcomePage(QWidget):
             if it.widget():
                 it.widget().hide()
                 it.widget().deleteLater()
+        from . import localshell
         store = self.main.store
-        order = [sid for sid in self.main.settings.get("recent", []) if store.get(sid)]
+        shells = {p.key(): p for p in localshell.profiles(self.main.settings, wait=False)}
+        # newest first: servers and shells of this computer ("local:<shell>") the way they were opened
+        order = [x for x in self.main.settings.get("recent", [])
+                 if store.get(x) or (x.startswith("local:") and x[6:] in shells)]
         order += [s.id for s in store.sessions if s.id not in order]
         for i, sid in enumerate(order[:6]):
-            s = store.get(sid)
-            b = QPushButton(f"{s.title()}\n{s.user}@{s.host}" + (f"  ·  {s.group}" if s.group else ""))
+            if sid.startswith("local:"):
+                p = shells[sid[6:]]
+                b = QPushButton(f"{p.name}\n{tr('This computer')}")
+                b.setIcon(icons.line("terminal", theme.current().accent))
+                b.setToolTip(tr("Recently opened on this computer"))
+                b.clicked.connect(lambda _=False, p=p: self.main.open_local(p))
+            else:
+                s = store.get(sid)
+                b = QPushButton(f"{s.title()}\n{s.user}@{s.host}" + (f"  ·  {s.group}" if s.group else ""))
+                b.setIcon(icons.line("server", theme.current().accent))
+                b.clicked.connect(lambda _=False, s=s: self.main.open_session(s))
             b.setObjectName("Card")
-            b.setIcon(icons.line("server", theme.current().accent))
             b.setIconSize(QSize(22, 22))
             b.setMinimumWidth(230)
             b.setCursor(Qt.CursorShape.PointingHandCursor)
-            b.clicked.connect(lambda _=False, s=s: self.main.open_session(s))
             self.recent_grid.addWidget(b, i // 2, i % 2)
         self.recent_label.setVisible(bool(order))
 
@@ -452,7 +463,7 @@ class HostTree(QTreeWidget):
             kind, value = it.data(0, HostsPage.TREE_ROLE)
             if kind == "host":
                 hosts.append(value)
-            elif value:
+            elif kind == "group" and value:
                 groups.append(value)
         self.page.start_drag(hosts, groups, self)
 
@@ -461,6 +472,8 @@ class HostTree(QTreeWidget):
         if it is None:
             return None, ""                          # empty space: top level
         kind, value = it.data(0, HostsPage.TREE_ROLE)
+        if kind in ("local", "localgroup"):
+            return it, None                          # hosts don't go into "This computer"
         if kind == "group":
             return it, value
         parent = it.parent()                         # onto a host: that host's group
@@ -486,7 +499,7 @@ class HostTree(QTreeWidget):
 
     def dragMoveEvent(self, e):
         item, group = self._target(e.position().toPoint())
-        ok = self.page.can_drop(read_payload(e.mimeData()), group)
+        ok = group is not None and self.page.can_drop(read_payload(e.mimeData()), group)
         self._show(item, ok)
         if ok:
             e.setDropAction(Qt.DropAction.MoveAction)
@@ -502,7 +515,7 @@ class HostTree(QTreeWidget):
         item, group = self._target(e.position().toPoint())
         payload = read_payload(e.mimeData())
         self._show(None, False)
-        if self.page.can_drop(payload, group):
+        if group is not None and self.page.can_drop(payload, group):
             e.setDropAction(Qt.DropAction.MoveAction)
             e.accept()                               # the store moves them; the tree is redrawn
             self.page.drop(payload, group)
@@ -705,6 +718,8 @@ class HostsPage(QWidget):
     @staticmethod
     def _tree_key(it: QTreeWidgetItem) -> str:
         kind, value = it.data(0, HostsPage.TREE_ROLE)
+        if kind == "localgroup":
+            return "\x00local"
         return value if kind == "group" else ""
 
     def refresh_tree(self):
@@ -745,6 +760,7 @@ class HostsPage(QWidget):
                 pos = sum(1 for i in range(parent.childCount()) if parent.child(i).data(0, self.TREE_ROLE)[0] == "host")
                 parent.insertChild(pos, it)
             add_edit_button(t, it, lambda _c=False, s=s: self.edit(s))
+        self._add_local_node(t, q, th)
         for key, it in nodes.items():
             if key:
                 if q:                        # searching: only groups with matches (or a matching name), all open
@@ -760,6 +776,27 @@ class HostsPage(QWidget):
             t.clearSelection()
         self.all_hosts_btn.setChecked(not self.group)
         t.blockSignals(False)
+
+    def _add_local_node(self, t, q: str, th) -> None:
+        """"This computer" first in the tree, with the shells of this computer."""
+        from . import localshell
+        shells = [p for p in localshell.profiles(self.main.settings, wait=False) if not q or q in p.name.lower()]
+        if not shells:
+            return
+        g = QTreeWidgetItem([tr("This computer")])
+        g.setData(0, self.TREE_ROLE, ("localgroup", ""))
+        g.setIcon(0, icons.line_selectable("terminal", th.icon, th.accent_text))
+        g.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+        t.insertTopLevelItem(0, g)
+        icon = icons.line_selectable("terminal", th.accent, th.accent_text)
+        for p in shells:
+            it = QTreeWidgetItem([p.name])
+            it.setData(0, self.TREE_ROLE, ("local", p.key()))
+            it.setIcon(0, icon)
+            it.setToolTip(0, tr("Open a terminal on this computer"))
+            it.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            g.addChild(it)
+        g.setExpanded(bool(q) or "\x00local" not in self._collapsed)
 
     def toggle_tree(self):
         self.main.settings["show_host_tree"] = not bool(self.main.settings.get("show_host_tree", True))
@@ -793,6 +830,11 @@ class HostsPage(QWidget):
 
     def _tree_double(self, it, _col=0):
         kind, value = it.data(0, self.TREE_ROLE)
+        if kind == "local":
+            p = self.main._local_profile(value)
+            if p is not None:
+                QTimer.singleShot(0, lambda: self.main.open_local(p))
+            return
         s = self.main.store.get(value) if kind == "host" else None
         if s:
             QTimer.singleShot(0, lambda: self.main.open_session(s))
@@ -803,6 +845,13 @@ class HostsPage(QWidget):
         if it is None:
             return self._page_menu(gpos)
         kind, value = it.data(0, self.TREE_ROLE)
+        if kind in ("local", "localgroup"):
+            m = QMenu(self)
+            if kind == "local":
+                m.addAction(tr("Open"), lambda: self._tree_double(it))
+            m.addAction(tr("Local terminals…"), self.main.edit_local_shells)
+            m.exec(gpos)
+            return
         if kind == "host" and self.main.store.get(value):
             self._host_menu(self.main.store.get(value), gpos)
         elif value:

@@ -203,6 +203,8 @@ def forget_last(session_ids, path=None) -> None:
 
 def query(sftp, home: str = "") -> Summary | None:
     """Runs in the explorer's SFTP worker thread. None when the server can't tell us."""
+    if hasattr(sftp, "local_disk_summary"):          # a local terminal's explorer: this computer's disks
+        return sftp.local_disk_summary()
     disks = parse_mounts(read_mounts(sftp))
     if not disks:
         # No /proc (macOS, BSD, ...): ask for the root disk and the home folder only

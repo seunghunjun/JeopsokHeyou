@@ -130,6 +130,7 @@ def self_tests(native_qpa: str) -> bool:
     for lang in ("en", "ko", "ja"):
         r = self_test(lang)
         ok = (r["frozen"] and r["language"] == lang and r["icon"] and r["gaegu_font"]
+              and r.get("local_shell") == "ok"
               and (lang == "en" or (r["catalog_entries"] > 100 and r["qt_translators"] >= 1)))
         print(f"  {lang}: {'OK' if ok else 'FAILED'}  {r['menus']}")
         if not ok:
