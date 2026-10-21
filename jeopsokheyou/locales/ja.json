@@ -613,5 +613,14 @@
   "Opening {host} in the explorer…": "エクスプローラーで {host} に接続しています…",
   "The terminal is connected to {host}. The explorer shows its files; it goes back to this computer when you leave it.": "ターミナルは {host} に接続しています。エクスプローラーはそのサーバーのファイルを表示し、接続を終えるとこのコンピューターに戻ります。",
   "The explorer could not open {host}: {error}": "エクスプローラーで {host} を開けませんでした: {error}",
-  "Hide explorer": "エクスプローラーを折りたたむ"
+  "Hide explorer": "エクスプローラーを折りたたむ",
+  "Copying: {name}": "コピー中: {name}",
+  "Moved {n} items": "{n} 個の項目を移動しました",
+  "Copied {n} items": "{n} 個の項目をコピーしました",
+  "{n} links or special files skipped": "リンク・特殊ファイル {n} 個はスキップ",
+  "{n} items cut — paste with {key}": "{n} 個の項目を切り取りました — {key} で貼り付け",
+  "{n} items copied — paste with {key}": "{n} 個の項目をコピーしました — {key} で貼り付け",
+  "From another place a paste copies (the originals stay there)": "別の場所からの貼り付けはコピーになります (元のファイルは残ります)",
+  "Cut": "切り取り",
+  "Paste into this folder": "このフォルダーに貼り付け"
 }
