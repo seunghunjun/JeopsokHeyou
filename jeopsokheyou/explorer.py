@@ -19,9 +19,11 @@ import sys
 import tempfile
 import threading
 import time
+import weakref
 from pathlib import Path
 
 import paramiko
+from paramiko.sftp import CMD_EXTENDED, int64
 from PySide6.QtCore import QFileSystemWatcher, QMimeData, QSize, QThread, QTimer, QUrl, Qt, Signal
 from PySide6.QtGui import QColor, QDrag, QGuiApplication, QKeySequence, QPalette
 from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QHBoxLayout, QStackedLayout,
@@ -41,6 +43,20 @@ log = applog.get("sftp")
 
 class Cancelled(Exception):
     pass
+
+
+# what Ctrl+C / Ctrl+X took (shared by every explorer, so items can be pasted into another one)
+CLIPBOARD: dict = {"source": None, "paths": [], "cut": False}
+
+
+def _key_text(key) -> str:
+    return QKeySequence(key).toString(QKeySequence.SequenceFormat.NativeText)
+
+
+def _temp_base() -> str:
+    d = os.path.join(tempfile.gettempdir(), "JeopsokHeyou")
+    os.makedirs(d, exist_ok=True)
+    return d
 
 
 def human_size(n: int) -> str:
@@ -468,6 +484,184 @@ def job_delete(paths: list[str]):
     return fn
 
 
+# ---------------------------------------------------------------- moving and copying inside one explorer
+def copy_name(names: set, name: str) -> str:
+    """A free name for a copy in the same folder: "a.txt" -> "a - copy.txt", then "a - copy (2).txt"."""
+    stem, ext = posixpath.splitext(name)
+    cand, n = f"{stem} - copy{ext}", 2
+    while cand in names:
+        cand, n = f"{stem} - copy ({n}){ext}", n + 1
+    return cand
+
+
+def parent_of(path: str) -> str:
+    return posixpath.dirname(path.rstrip("/")) or "/"
+
+
+def inside(path: str, folder: str) -> bool:
+    """``path`` is ``folder`` itself or somewhere below it."""
+    f = folder.rstrip("/")
+    return path.rstrip("/") == f or path.startswith(f + "/")
+
+
+def job_paste_check(paths: list[str], dest: str, mode: str):
+    """Before moving or copying into ``dest``: which names are already there (a copy into its own folder gets a
+    new name instead, so it never clashes)."""
+    def fn(sftp, w):
+        existing = []
+        for p in paths:
+            if mode == "copy" and parent_of(p) == (dest.rstrip("/") or "/"):
+                continue
+            name = posixpath.basename(p.rstrip("/"))
+            try:
+                st = sftp.stat(posixpath.join(dest, name))
+            except OSError:
+                continue
+            existing.append((name, stat.S_ISDIR(st.st_mode)))
+        return paths, dest, mode, existing
+    return fn
+
+
+def _is_dir(sftp, path: str) -> bool:
+    return stat.S_ISDIR(sftp.stat(path).st_mode)
+
+
+def _move(sftp, src: str, target: str, overwrite: bool) -> None:
+    try:
+        sftp.stat(target)
+    except OSError:
+        sftp.rename(src, target)             # the usual case: nothing there, one rename
+        return
+    if not overwrite:
+        return
+    s_dir, t_dir = _is_dir(sftp, src), _is_dir(sftp, target)
+    if s_dir and t_dir:                      # merge: move what is inside, then the emptied folder goes
+        for a in sftp.listdir_attr(src):
+            _move(sftp, posixpath.join(src, a.filename), posixpath.join(target, a.filename), overwrite)
+        try:
+            sftp.rmdir(src)
+        except OSError:
+            pass                             # something stayed (a file onto a folder of the same name)
+    elif not s_dir and not t_dir:
+        sftp.remove(target)
+        sftp.rename(src, target)
+    # a file onto a folder of the same name (or the other way round) is left where it is
+
+
+def job_move(paths: list[str], dest: str, skip: set | None = None, overwrite: bool = False):
+    """Move into ``dest`` by renaming (nothing is copied, no command runs on the server). With ``overwrite`` a file
+    of the same name is replaced and a folder of the same name gets the moved folder's contents."""
+    skip = skip or set()
+
+    def fn(sftp, w):
+        moved = 0
+        for p in paths:
+            if w.cancel:
+                raise Cancelled()
+            name = posixpath.basename(p.rstrip("/"))
+            if name in skip or inside(dest, p) or parent_of(p) == (dest.rstrip("/") or "/"):
+                continue                     # skipped, into itself, or already there
+            log.info("move: %s -> %s", p, dest)
+            _move(sftp, p, posixpath.join(dest, name), overwrite)
+            moved += 1
+        return dest, moved
+    return fn
+
+
+def _copy_file(sftp, src: str, dst: str, w, label: str, base: int, total: int) -> int:
+    """Copy one file on the server: in place with the copy-data extension (OpenSSH 9+), otherwise read and
+    written back through this connection. Returns its size."""
+    size = sftp.stat(src).st_size or 0
+    if w.copy_data:
+        try:
+            with sftp.open(src, "rb") as fi, sftp.open(dst, "wb") as fo:
+                sftp._request(CMD_EXTENDED, "copy-data", fi.handle, int64(0), int64(0), fo.handle, int64(0))
+            w.progress.emit(label, base + size, total)
+            return size
+        except Exception as e:
+            log.info("copy-data not available (%s): copying through this connection", e)
+            w.copy_data = False
+    done = 0
+    with sftp.open(src, "rb") as fi, sftp.open(dst, "wb") as fo:
+        if size:
+            fi.prefetch(size)
+        while True:
+            if w.cancel:
+                raise Cancelled()
+            buf = fi.read(1 << 18)
+            if not buf:
+                break
+            fo.write(buf)
+            done += len(buf)
+            w.progress.emit(label, base + done, total)
+    return size
+
+
+def job_copy(paths: list[str], dest: str, skip: set | None = None, overwrite: bool = False):
+    """Copy files and folders into ``dest`` on the same server (or this computer). A copy into its own folder gets
+    a new name ("a - copy.txt"). Links, devices and pipes are skipped (not followed or opened)."""
+    skip = skip or set()
+
+    def fn(sftp, w):
+        local = getattr(sftp, "local_copy", None)
+        w.copy_data = True
+        plan, names_in_dest = [], None
+        for p in paths:
+            name = posixpath.basename(p.rstrip("/"))
+            if name in skip or inside(dest, p):
+                continue
+            if parent_of(p) == (dest.rstrip("/") or "/"):
+                if names_in_dest is None:
+                    names_in_dest = {a.filename for a in sftp.listdir_attr(dest)}
+                name = copy_name(names_in_dest, name)
+                names_in_dest.add(name)
+            plan.append((p, posixpath.join(dest, name)))
+        items, total, skipped = [], 0, 0
+
+        def walk(src, dst):
+            nonlocal total, skipped
+            if w.cancel:
+                raise Cancelled()
+            st = sftp.lstat(src)
+            if stat.S_ISDIR(st.st_mode):
+                items.append((True, src, dst))
+                for a in sftp.listdir_attr(src):
+                    walk(posixpath.join(src, a.filename), posixpath.join(dst, a.filename))
+            elif stat.S_ISREG(st.st_mode):
+                items.append((False, src, dst))
+                total += st.st_size or 0
+            else:
+                skipped += 1                 # link, FIFO, socket, device
+        for src, dst in plan:
+            walk(src, dst)
+        done = 0
+        for is_dir, src, dst in items:
+            if w.cancel:
+                raise Cancelled()
+            if is_dir:
+                try:
+                    sftp.mkdir(dst)
+                except OSError:
+                    pass                     # already there (merging)
+                continue
+            if not overwrite:
+                try:
+                    sftp.stat(dst)
+                    continue                 # keep what is there
+                except OSError:
+                    pass
+            label = tr("Copying: {name}", name=posixpath.basename(dst))
+            log.info("copy: %s -> %s", src, dst)
+            if local is not None:
+                local(src, dst)
+                done += sftp.stat(dst).st_size or 0
+                w.progress.emit(label, done, total)
+            else:
+                done += _copy_file(sftp, src, dst, w, label, done, total)
+        return dest, len(plan), skipped
+    return fn
+
+
 def job_simple(action):
     def fn(sftp, w):
         return action(sftp)
@@ -596,6 +790,7 @@ class FileTree(QTreeWidget):
     files_dropped = Signal(list, object)  # local paths, target item(or None)
     drag_out = Signal()                   # started dragging remote items out
     remote_dropped = Signal(object, object)   # a server explorer's items dropped here (source explorer, target)
+    moved_here = Signal(str, bool)            # our own items dropped on one of our folders (folder, copy)
 
     def __init__(self):
         super().__init__()
@@ -608,9 +803,21 @@ class FileTree(QTreeWidget):
     def startDrag(self, actions):
         self.drag_out.emit()
 
+    def keyPressEvent(self, e):
+        # copy / cut / paste files (the list's own Ctrl+C would copy an item's text)
+        ex = self.explorer
+        if ex is not None and e.matches(QKeySequence.StandardKey.Copy):
+            ex.copy_selected(False)
+        elif ex is not None and e.matches(QKeySequence.StandardKey.Cut):
+            ex.copy_selected(True)
+        elif ex is not None and e.matches(QKeySequence.StandardKey.Paste):
+            ex.paste()
+        else:
+            super().keyPressEvent(e)
+
     def _from(self, e) -> str:
         """"files" (from the file manager or this computer's explorer), "remote" (a server's explorer, onto this
-        computer's) or "" (not accepted — e.g. our own items)."""
+        computer's), "self" (our own items: moved / copied inside) or "" (not accepted)."""
         if not e.mimeData().hasUrls():
             return ""
         src = e.source()
@@ -618,14 +825,37 @@ class FileTree(QTreeWidget):
             return "files"
         other = getattr(src, "explorer", None)
         mine = self.explorer
-        if other is None or mine is None or other is mine:
+        if other is not None and other is mine:
+            return "self"
+        if other is None or mine is None:
             return ""
         if other.is_local:
             return "files"                # this computer's files: upload / copy them here
         return "remote" if mine.is_local else ""
 
+    @staticmethod
+    def copy_key(e) -> bool:
+        """Ctrl (Option on macOS) held while dropping our own items: copy instead of move."""
+        key = Qt.KeyboardModifier.AltModifier if sys.platform == "darwin" else Qt.KeyboardModifier.ControlModifier
+        return bool(e.modifiers() & key)
+
+    def folder_at(self, pos) -> str:
+        """Where a drop of our own items goes: the folder under the mouse, the folder of the file under it, or the
+        current folder."""
+        it = self.itemAt(pos)
+        path = it.data(0, Qt.ItemDataRole.UserRole) if it is not None else None
+        if not path:
+            return self.explorer.cwd
+        return path if it.data(0, Qt.ItemDataRole.UserRole + 1) else parent_of(path)
+
+    def _accepts(self, e) -> bool:
+        kind = self._from(e)
+        if kind == "self":                # not into one of the dragged folders (or below it)
+            folder = self.folder_at(e.position().toPoint())
+            return bool(folder) and not any(inside(folder, p) for p in self.explorer._selected_paths())
+        return bool(kind)
+
     def dragEnterEvent(self, e):
-        # don't accept drags from ourselves (download placeholders) as uploads
         if self._from(e):
             e.setDropAction(Qt.DropAction.CopyAction)
             e.accept()
@@ -633,7 +863,7 @@ class FileTree(QTreeWidget):
             e.ignore()
 
     def dragMoveEvent(self, e):
-        if self._from(e):
+        if self._accepts(e):
             e.setDropAction(Qt.DropAction.CopyAction)
             e.accept()
         else:
@@ -642,6 +872,15 @@ class FileTree(QTreeWidget):
     def dropEvent(self, e):
         kind = self._from(e)
         target = self.itemAt(e.position().toPoint())
+        if kind == "self":
+            if self._accepts(e):
+                self.explorer._dropped_on_self = True
+                self.moved_here.emit(self.folder_at(e.position().toPoint()), self.copy_key(e))
+                e.setDropAction(Qt.DropAction.CopyAction)
+                e.accept()
+            else:
+                e.ignore()
+            return
         if kind == "remote":
             self.remote_dropped.emit(e.source().explorer, target)
             e.setDropAction(Qt.DropAction.CopyAction)
@@ -694,6 +933,8 @@ class SftpExplorer(QWidget):
         self._internal_drop = None                 # a drag of ours dropped on this computer's explorer: (folder, explorer)
         self._refresh_after_download = None        # that explorer, refreshed once the download is done
         self._pending_view = None                  # selection + scroll to put back after a refresh
+        self._dropped_on_self = False              # a drag of ours ended on one of our own folders
+        self._after_download = None                # server to server paste: upload what came down
         self._dir_watch = None                     # this computer's folders on screen (local terminals only)
         self._changed_dirs: set[str] = set()
         self._watch_timer = QTimer(self)
@@ -783,6 +1024,8 @@ class SftpExplorer(QWidget):
         self.tree.currentItemChanged.connect(self._on_current_changed)
         self.tree.files_dropped.connect(self._on_dropped)
         self.tree.remote_dropped.connect(self._on_remote_dropped)
+        self.tree.moved_here.connect(lambda folder, copy: self.paste_paths(self._selected_paths(), folder,
+                                                                           "copy" if copy else "move"))
         self.tree.drag_out.connect(self._start_drag_out)
         self.tree.explorer = self
         h = self.tree.header()
@@ -1099,6 +1342,9 @@ class SftpExplorer(QWidget):
             target, self._refresh_after_download = self._refresh_after_download, None
             if target is not None:
                 target.refresh()
+            after, self._after_download = self._after_download, None
+            if after is not None:
+                after()
         elif tag == "upload_check":
             self._upload_checked(*payload)
         elif tag == "upload":
@@ -1121,6 +1367,19 @@ class SftpExplorer(QWidget):
             self._done(tr("Saved to server: {path}", path=payload))
         elif tag in ("delete", "mkdir", "rename"):
             self.refresh()
+        elif tag == "paste_check":
+            self._paste_checked(*payload)
+        elif tag == "move":
+            dest, n = payload
+            self.info.setText(tr("Moved {n} items", n=n))
+            self._listings.clear()               # the sources' folders changed too
+            self.refresh()
+        elif tag == "copy":
+            dest, n, skipped = payload
+            note = ("  (" + tr("{n} links or special files skipped", n=skipped) + ")") if skipped else ""
+            self._done(tr("Copied {n} items", n=n) + note)
+            self._listings.pop(dest, None)
+            self.refresh()
         elif tag == "stat_open":
             path, is_dir = payload
             if is_dir:
@@ -1131,8 +1390,10 @@ class SftpExplorer(QWidget):
     def _on_error(self, tag: str, msg: str):
         if tag == "disk":
             return   # disk space is a nice-to-have: never report it as an error
-        if tag in ("upload", "download", "open", "open_with", "reupload"):
+        if tag in ("upload", "download", "open", "open_with", "reupload", "copy"):
             self._done("")
+        if tag == "download":
+            self._after_download = None
         if tag in ("open", "open_with"):
             self._downloading.clear()
         if tag == "list":
@@ -1143,7 +1404,11 @@ class SftpExplorer(QWidget):
             self.info.setText(tr("Cancelled"))
             return
         self.info.setText(tr("Error: {msg}", msg=msg))
-        if tag in ("upload", "upload_check", "download", "reupload", "delete", "mkdir", "rename"):
+        if tag in ("upload", "upload_check", "download", "reupload", "delete", "mkdir", "rename",
+                   "paste_check", "move", "copy"):
+            if tag == "move":
+                self._listings.clear()
+                self.refresh()                  # some may have moved before the error
             QMessageBox.warning(self, tr("File operation failed"), msg)
 
     def _on_progress(self, label: str, done: int, total: int):
@@ -1623,7 +1888,9 @@ class SftpExplorer(QWidget):
             drag = QDrag(self.tree)
             drag.setMimeData(mime)
             drag.setPixmap(sel[0].icon(0).pixmap(QSize(32, 32)))
+            self._dropped_on_self = False
             drag.exec(Qt.DropAction.CopyAction, Qt.DropAction.CopyAction)
+            self._dropped_on_self = False
             return
         remote, items = [], []
         for it in sel:
@@ -1643,7 +1910,12 @@ class SftpExplorer(QWidget):
         drag.setMimeData(mime)
         drag.setPixmap(sel[0].icon(0).pixmap(QSize(32, 32)))
         self._internal_drop = None
+        self._dropped_on_self = False
         result = drag.exec(Qt.DropAction.CopyAction, Qt.DropAction.CopyAction)
+        if self._dropped_on_self:               # moved / copied inside this explorer (done by the drop)
+            self._dropped_on_self = False
+            dragout.cleanup_staging(staging)
+            return
         if self._internal_drop is not None:     # dropped on a local terminal's explorer: download straight there
             dragout.cleanup_staging(staging)
             folder, target = self._internal_drop
@@ -1800,6 +2072,80 @@ class SftpExplorer(QWidget):
         except OSError as e:
             QMessageBox.warning(self, tr("File operation failed"), str(e))
 
+    # ------------------------------------------------------------ copy / cut / paste
+    def copy_selected(self, cut: bool = False):
+        """Ctrl+C / Ctrl+X: remember the selected items (pasted with Ctrl+V here, in another folder, or in another
+        explorer: another server or this computer)."""
+        paths = self._selected_paths()
+        if not paths:
+            return
+        CLIPBOARD.update(source=weakref.ref(self), paths=list(paths), cut=cut)
+        key = _key_text(QKeySequence.StandardKey.Paste)
+        self.info.setText(tr("{n} items cut — paste with {key}", n=len(paths), key=key) if cut
+                          else tr("{n} items copied — paste with {key}", n=len(paths), key=key))
+
+    def can_paste(self) -> bool:
+        src = CLIPBOARD["source"]() if CLIPBOARD["source"] else None
+        return src is not None and src.conn is not None and bool(CLIPBOARD["paths"])
+
+    def paste(self, dest: str = ""):
+        """Ctrl+V: into the current folder (or ``dest``)."""
+        dest = dest or self.cwd
+        if not self.can_paste() or not dest or not self.browse:
+            return
+        src, paths, cut = CLIPBOARD["source"](), CLIPBOARD["paths"], CLIPBOARD["cut"]
+        if src is self:
+            self.paste_paths(paths, dest, "move" if cut else "copy")
+            if cut:
+                CLIPBOARD.update(source=None, paths=[], cut=False)   # what was cut is pasted once
+            return
+        self._paste_from(src, paths, dest)
+
+    def paste_paths(self, paths: list[str], dest: str, mode: str):
+        """Move or copy our own items into ``dest`` (asks first about names that are already there)."""
+        paths = [p for p in paths if not inside(dest, p)]
+        if mode == "move":
+            paths = [p for p in paths if parent_of(p) != (dest.rstrip("/") or "/")]
+        if paths and self.browse:
+            self.browse.submit("paste_check", job_paste_check(paths, dest, mode))
+
+    def _paste_checked(self, paths: list[str], dest: str, mode: str, existing: list):
+        skip: set = set()
+        overwrite = False
+        if existing:
+            choice = ask_overwrite(self, existing, dest)
+            if choice == "cancel":
+                self.info.setText(tr("Cancelled"))
+                return
+            if choice == "skip":
+                skip = {n for n, _d in existing}
+            else:
+                overwrite = True
+        if mode == "move" and self.browse:      # renames only: quick, on the browsing connection
+            self.browse.submit("move", job_move(paths, dest, skip, overwrite))
+        elif mode == "copy" and self.transfer:  # may take a while: on the transfer connection (progress, Cancel)
+            self.transfer.submit("copy", job_copy(paths, dest, skip, overwrite))
+
+    def _paste_from(self, src, paths: list[str], dest: str):
+        """Items of another explorer: copied through the usual download / upload (the originals stay)."""
+        if src.is_local:                        # this computer's files: upload (a copy, also onto this computer)
+            self.upload([n for n in (src._native(p) for p in paths) if n], dest)
+        elif self.is_local:                     # a server's files onto this computer: download
+            native = self._native(dest)
+            if native and src.transfer:
+                src._refresh_after_download = self
+                src.transfer.submit("download", job_download(paths, native, confirm_limits(src.settings)))
+        elif src.transfer:                      # server to server: down to a temporary folder here, then up
+            stage = tempfile.mkdtemp(prefix="paste-", dir=_temp_base())
+            names = [posixpath.basename(p.rstrip("/")) for p in paths]
+
+            def up():
+                self.upload([q for q in (os.path.join(stage, n) for n in names) if os.path.exists(q)], dest)
+            src._after_download = up
+            src.transfer.submit("download", job_download(paths, stage, confirm_limits(src.settings)))
+        if CLIPBOARD["cut"]:
+            self.info.setText(tr("From another place a paste copies (the originals stay there)"))
+
     def cd_here(self, path: str | None = None):
         target = path if isinstance(path, str) and path else self.cwd
         if target:
@@ -1825,6 +2171,10 @@ class SftpExplorer(QWidget):
             else:
                 m.addAction(tr("Download…"), self.download_selected)
             m.addSeparator()
+            m.addAction(tr("Copy") + f" ({_key_text(QKeySequence.StandardKey.Copy)})", lambda: self.copy_selected(False))
+            m.addAction(tr("Cut") + f" ({_key_text(QKeySequence.StandardKey.Cut)})", lambda: self.copy_selected(True))
+            if is_dir:
+                m.addAction(tr("Paste into this folder"), lambda: self.paste(path)).setEnabled(self.can_paste())
             m.addAction(tr("Rename (F2)"), self.rename_selected)
             m.addAction(tr("Delete (Del)"), self.delete_selected)
             m.addSeparator()
@@ -1833,6 +2183,8 @@ class SftpExplorer(QWidget):
             m.addSeparator()
         if not self.is_local:
             m.addAction(tr("Upload…"), self.upload_dialog)
+        m.addAction(tr("Paste") + f" ({_key_text(QKeySequence.StandardKey.Paste)})",
+                    self.paste).setEnabled(self.can_paste())
         m.addAction(tr("New folder…"), self.new_folder)
         current = self._native(self.cwd) if self.is_local else self.cwd
         m.addAction(tr("Copy current path"), lambda: QGuiApplication.clipboard().setText(current))

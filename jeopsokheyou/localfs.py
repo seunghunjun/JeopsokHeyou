@@ -139,6 +139,10 @@ class LocalSftp:
         except OSError:
             pass
 
+    def local_copy(self, src: str, dst: str) -> None:
+        """job_copy on this computer: a plain file copy (keeps the dates)."""
+        shutil.copy2(self._n(src), self._n(dst))
+
     # disk space of this computer (diskusage.query asks for it)
     def local_disk_summary(self) -> diskusage.Summary | None:
         disks = []
