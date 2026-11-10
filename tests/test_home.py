@@ -157,6 +157,35 @@ check("hide button next to All hosts collapses the tree", not hp.tree_box.isVisi
 hp.tree_expand_btn.click()
 check("the strip's button brings the tree back", hp.tree_box.isVisible() and not hp.tree_strip.isVisible())
 
+# the host list's right edge can be dragged; the width is remembered
+wait(lambda: False, 0.3)
+check("the host list starts at its usual width", abs(hp.tree_box.width() - home.TREE_WIDTH) <= 2, hp.tree_box.width())
+from PySide6.QtCore import QEvent, QPointF, Qt  # noqa: E402
+from PySide6.QtGui import QMouseEvent  # noqa: E402
+handle = hp.tree_split.handle(1)
+
+
+def mouse(kind, x, buttons):
+    p = QPointF(x, handle.height() / 2)
+    app.sendEvent(handle, QMouseEvent(kind, p, handle.mapToGlobal(p), Qt.MouseButton.LeftButton, buttons,
+                                      Qt.KeyboardModifier.NoModifier))
+
+
+mouse(QEvent.Type.MouseButtonPress, 2, Qt.MouseButton.LeftButton)
+mouse(QEvent.Type.MouseMove, 122, Qt.MouseButton.LeftButton)
+mouse(QEvent.Type.MouseButtonRelease, 122, Qt.MouseButton.NoButton)
+app.processEvents()
+check("dragging its edge makes it wider", hp.tree_box.width() > home.TREE_WIDTH + 60, hp.tree_box.width())
+check("... and the width is remembered", w.settings.get("host_tree_width") == hp.tree_box.width(),
+      (w.settings.get("host_tree_width"), hp.tree_box.width()))
+w.settings["host_tree_width"] = 300          # as read back from the settings file
+hp.toggle_tree()
+hp.toggle_tree()
+check("the remembered width is used when the list shows", wait(lambda: abs(hp.tree_box.width() - 300) <= 2, 3),
+      hp.tree_box.width())
+hp.tree_split.setSizes([5000, 100])
+check("never wider than the limit", hp.tree_box.width() <= home.TREE_MAX, hp.tree_box.width())
+
 # right-click menu on empty space
 hp.open_group("")
 texts = [a.text() for a in hp.page_menu().actions() if a.text()]

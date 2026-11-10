@@ -13,7 +13,7 @@ from PySide6.QtGui import QColor, QDrag, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QDialog, QDialogButtonBox, QFormLayout, QFrame,
                                QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLayout, QLineEdit, QListWidget,
                                QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
-                               QSizePolicy, QStackedWidget, QTableWidget, QTableWidgetItem, QToolButton,
+                               QSizePolicy, QSplitter, QStackedWidget, QTableWidget, QTableWidgetItem, QToolButton,
                                QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from . import config, icons, library, theme, vault
@@ -532,6 +532,9 @@ class HostTree(QTreeWidget):
             p.end()
 
 
+TREE_WIDTH, TREE_MIN, TREE_MAX = 230, 160, 600     # the host list next to the cards (px)
+
+
 class HostsPage(QWidget):
     def __init__(self, main):
         super().__init__()
@@ -543,7 +546,8 @@ class HostsPage(QWidget):
         # Left: group / subgroup / host tree to jump anywhere
         tree_box = QFrame()
         tree_box.setObjectName("Sidebar")
-        tree_box.setFixedWidth(230)
+        tree_box.setMinimumWidth(TREE_MIN)            # its right edge can be dragged (the width is remembered)
+        tree_box.setMaximumWidth(TREE_MAX)
         tl = QVBoxLayout(tree_box)
         tl.setContentsMargins(6, 14, 6, 8)
         tl.setSpacing(4)
@@ -585,7 +589,11 @@ class HostsPage(QWidget):
         self.tree.customContextMenuRequested.connect(self._tree_menu)
         self._collapsed: set[str] = set()
         tl.addWidget(self.tree)
-        outer.addWidget(tree_box)
+        self.tree_split = QSplitter(Qt.Orientation.Horizontal)
+        self.tree_split.setChildrenCollapsible(False)
+        self.tree_split.setHandleWidth(5)
+        self.tree_split.setObjectName("HostTreeSplit")   # a wider handle (easy to grab)
+        self.tree_split.addWidget(tree_box)
         # Collapsed: a slim strip with a button to bring the tree back
         strip = QFrame()
         strip.setObjectName("Sidebar")
@@ -673,7 +681,11 @@ class HostsPage(QWidget):
         self.inner_lay.addStretch(1)
         scroll.setWidget(inner)
         lay.addWidget(scroll, 1)
-        outer.addWidget(body, 1)
+        self.tree_split.addWidget(body)
+        self.tree_split.setStretchFactor(0, 0)
+        self.tree_split.setStretchFactor(1, 1)
+        self.tree_split.splitterMoved.connect(self._tree_resized)
+        outer.addWidget(self.tree_split, 1)
         # Right-side edit panel
         self.panel = QFrame()
         self.panel.setObjectName("EditPanel")
@@ -798,6 +810,22 @@ class HostsPage(QWidget):
             g.addChild(it)
         g.setExpanded(bool(q) or "\x00local" not in self._collapsed)
 
+    def _restore_tree_width(self):
+        """Put the host list back at its remembered width (once the page has its real size)."""
+        sizes = self.tree_split.sizes()
+        total = sum(sizes)
+        width = min(TREE_MAX, max(TREE_MIN, int(self.main.settings.get("host_tree_width", TREE_WIDTH) or TREE_WIDTH)))
+        if len(sizes) == 2 and total > width + 100 and sizes[0] != width:
+            self.tree_split.setSizes([width, total - width])
+
+    def showEvent(self, e):
+        super().showEvent(e)
+        QTimer.singleShot(0, self._restore_tree_width)
+
+    def _tree_resized(self, *_a):
+        if self.tree_box.isVisible():
+            self.main.settings["host_tree_width"] = self.tree_box.width()
+
     def toggle_tree(self):
         self.main.settings["show_host_tree"] = not bool(self.main.settings.get("show_host_tree", True))
         self._apply_tree_visibility()
@@ -806,6 +834,8 @@ class HostsPage(QWidget):
         shown = bool(self.main.settings.get("show_host_tree", True))
         self.tree_box.setVisible(shown)
         self.tree_strip.setVisible(not shown)
+        if shown:
+            QTimer.singleShot(0, self._restore_tree_width)
 
     def _tree_items(self):
         out, stack = [], [self.tree.topLevelItem(i) for i in range(self.tree.topLevelItemCount())]

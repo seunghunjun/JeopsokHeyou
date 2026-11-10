@@ -59,6 +59,15 @@ from PySide6.QtWidgets import QToolButton  # noqa: E402
 check("no explorer button on the toolbar any more",
       not any("explorer" in b.toolTip().lower() for b in w.main_toolbar.findChildren(QToolButton)))
 
+# ---- the pane title bar only where terminals are side by side (alone, the tab already names it)
+from PySide6.QtCore import Qt  # noqa: E402
+check("one terminal: no title bar above it", tab.panes[0].frame.bar.isHidden())
+w.split(Qt.Orientation.Horizontal)
+check("split: both terminals get their title bar", wait(lambda: len(tab.panes) == 2, 10)
+      and all(not p.frame.bar.isHidden() for p in tab.panes))
+tab.close_pane(tab.panes[1])
+check("back to one: the title bar goes again", wait(lambda: len(tab.panes) == 1, 10) and tab.panes[0].frame.bar.isHidden())
+
 # ---- View > Toolbar
 check("toolbar shown by default, menu item checked", not w.main_toolbar.isHidden() and w.toolbar_act.isChecked())
 w.toolbar_act.trigger()

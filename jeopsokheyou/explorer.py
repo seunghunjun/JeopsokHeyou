@@ -25,7 +25,7 @@ from pathlib import Path
 import paramiko
 from paramiko.sftp import CMD_EXTENDED, int64
 from PySide6.QtCore import QFileSystemWatcher, QMimeData, QSize, QThread, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QColor, QDrag, QGuiApplication, QKeySequence, QPalette
+from PySide6.QtGui import QBrush, QColor, QDrag, QGuiApplication, QKeySequence, QPalette
 from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QHBoxLayout, QStackedLayout,
                                QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
                                QMessageBox, QProgressBar, QStyle, QStyledItemDelegate, QToolButton, QTreeWidget,
@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QHBoxLayout, QSta
 from . import applog, diskusage, diskui, dragout, icons, paths, winopen
 from .i18n import tr
 from .safenames import UnsafeName, local_name, safe_join
+from .config import Session
 from .ssh import SshConnection
 
 
@@ -159,6 +160,13 @@ def ancestors(path: str) -> list[str]:
         cur += "/" + part
         out.append(cur)
     return out
+
+
+def _numbered(job, gen: int):
+    """A listing job whose result also carries the number of the move it was made for."""
+    def fn(sftp, w):
+        return (*job(sftp, w), gen)
+    return fn
 
 
 def job_tree(path: str, origin: str, known: set):
@@ -363,6 +371,26 @@ def job_upload_check(local_paths: list[str], remote_dir: str):
             existing.append((name, stat.S_ISDIR(st.st_mode)))
         return local_paths, remote_dir, existing
     return fn
+
+
+def is_permission_error(msg: str) -> bool:
+    return msg.startswith("PermissionError") or "Permission denied" in msg or "[Errno 13]" in msg
+
+
+def tell_permission(parent, msg: str, who: str) -> bool:
+    """A server refused a file operation: say which account the explorer works as (su / sudo in the terminal
+    does not change it). True when the user asks to connect as another account."""
+    box = QMessageBox(parent)
+    box.setIcon(QMessageBox.Icon.Warning)
+    box.setWindowTitle(tr("File operation failed"))
+    box.setText(msg)
+    box.setInformativeText(tr("The explorer works as {who}. su or sudo in the terminal does not change that (and "
+                              "after su the explorer no longer follows the terminal's folder). To work as another "
+                              "account, connect as that account.", who=who))
+    other = box.addButton(tr("Connect as another account…"), QMessageBox.ButtonRole.ActionRole)
+    box.addButton(QMessageBox.StandardButton.Close)
+    box.exec()
+    return box.clickedButton() is other
 
 
 def ask_overwrite(parent, existing: list[tuple[str, bool]], remote_dir: str) -> str:
@@ -787,14 +815,16 @@ class MutedDelegate(QStyledItemDelegate):
 
 
 class FileTree(QTreeWidget):
-    files_dropped = Signal(list, object)  # local paths, target item(or None)
+    files_dropped = Signal(list, object)  # local paths, the folder they go into (path)
     drag_out = Signal()                   # started dragging remote items out
-    remote_dropped = Signal(object, object)   # a server explorer's items dropped here (source explorer, target)
+    remote_dropped = Signal(object, object)   # a server explorer's items dropped here (source explorer, folder)
     moved_here = Signal(str, bool)            # our own items dropped on one of our folders (folder, copy)
 
     def __init__(self):
         super().__init__()
         self.explorer = None              # the explorer this list belongs to
+        self._marked = None               # the folder row highlighted while something is dragged over the list
+        self._info_before = None          # the explorer's status text before the drag named the target
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
@@ -855,6 +885,45 @@ class FileTree(QTreeWidget):
             return bool(folder) and not any(inside(folder, p) for p in self.explorer._selected_paths())
         return bool(kind)
 
+    # ---- while dragging: the folder the drop goes into is highlighted and named below the list
+    def _show_target(self, e, kind: str) -> None:
+        ex = self.explorer
+        folder = self.folder_at(e.position().toPoint())
+        it = ex._cwd_item if folder == ex.cwd else ex._find_item(folder)
+        if it is not self._marked:
+            self._unmark()
+            if it is not None:
+                color = QColor(self.palette().color(QPalette.ColorRole.Highlight))
+                color.setAlpha(90)
+                for c in range(self.columnCount()):
+                    it.setBackground(c, QBrush(color))
+                self._marked = it
+        shown = ex._native(folder) if ex.is_local else folder
+        if kind == "self":
+            text = tr("Copy to: {path}", path=shown) if self.copy_key(e) else tr("Move to: {path}", path=shown)
+        elif kind == "remote" or ex.is_local:
+            text = tr("Copy to: {path}", path=shown)
+        else:
+            text = tr("Upload to: {path}", path=shown)
+        if self._info_before is None:
+            self._info_before = ex.info.text()
+        ex.info.setText(text)
+
+    def _unmark(self) -> None:
+        it, self._marked = self._marked, None
+        if it is not None:
+            try:
+                for c in range(self.columnCount()):
+                    it.setBackground(c, QBrush())
+            except RuntimeError:
+                pass                      # the list was rebuilt meanwhile
+
+    def _hide_target(self) -> None:
+        self._unmark()
+        before, self._info_before = self._info_before, None
+        if before is not None and self.explorer is not None:
+            self.explorer.info.setText(before)
+
     def dragEnterEvent(self, e):
         if self._from(e):
             e.setDropAction(Qt.DropAction.CopyAction)
@@ -864,14 +933,21 @@ class FileTree(QTreeWidget):
 
     def dragMoveEvent(self, e):
         if self._accepts(e):
+            self._show_target(e, self._from(e))
             e.setDropAction(Qt.DropAction.CopyAction)
             e.accept()
         else:
+            self._hide_target()
             e.ignore()
 
+    def dragLeaveEvent(self, e):
+        self._hide_target()
+        super().dragLeaveEvent(e)
+
     def dropEvent(self, e):
+        self._hide_target()
         kind = self._from(e)
-        target = self.itemAt(e.position().toPoint())
+        target = self.folder_at(e.position().toPoint()) if kind else ""   # the folder shown while dragging
         if kind == "self":
             if self._accepts(e):
                 self.explorer._dropped_on_self = True
@@ -899,6 +975,7 @@ class SftpExplorer(QWidget):
     status = Signal(str)
     disk_updated = Signal(object)   # diskusage.Summary or None (server disk space, read once per connection)
     hide_requested = Signal()       # its own fold button (top right): fold the explorer of this window
+    connect_as_requested = Signal(object)   # Session: the same server as another account (after "permission denied")
     visibility_set = Signal(bool)   # shown / folded (the » strip next to the terminal shows when folded)
 
     def __init__(self, session_id: str, settings: dict, parent=None):
@@ -934,6 +1011,8 @@ class SftpExplorer(QWidget):
         self._refresh_after_download = None        # that explorer, refreshed once the download is done
         self._pending_view = None                  # selection + scroll to put back after a refresh
         self._dropped_on_self = False              # a drag of ours ended on one of our own folders
+        self._keep_info = None                     # (text, until): a result kept below the list over a refresh
+        self._nav_gen = 0                          # counts moves: a listing for an older move arrives too late
         self._after_download = None                # server to server paste: upload what came down
         self._dir_watch = None                     # this computer's folders on screen (local terminals only)
         self._changed_dirs: set[str] = set()
@@ -1221,6 +1300,8 @@ class SftpExplorer(QWidget):
         self.info.setText(tr("Loading… {path}", path=path))
         if origin != "refresh":
             self._pending_view = None
+            self._new_move()
+        gen = self._nav_gen
         # a folder the user opened here is on its way: the terminal's reports wait until it is shown
         self._user_move = path if origin == "user" else None
         self._target = path   # so comparisons use the intended destination even before the listing arrives
@@ -1229,9 +1310,14 @@ class SftpExplorer(QWidget):
         if self.tree_mode():
             fresh = path if path.startswith("/") else ""
             known = {d for d in self._listings if d != fresh}
-            self.browse.submit("list", job_tree(path, origin, known))
+            self.browse.submit("list", _numbered(job_tree(path, origin, known), gen))
         else:
-            self.browse.submit("list", job_list(path, origin))
+            self.browse.submit("list", _numbered(job_list(path, origin), gen))
+
+    def _new_move(self) -> None:
+        """Another move (opened here or followed): listings still on their way for earlier ones are stale."""
+        self._nav_gen += 1
+        self._user_move = None
 
     def refresh(self) -> None:
         if self.cwd:
@@ -1253,6 +1339,7 @@ class SftpExplorer(QWidget):
                 self.history.append(base)
                 del self.history[:-50]
                 self.forward.clear()
+                self._new_move()
                 self._set_location(parent_item, parent_path)
                 self._select_location()
                 self.navigated.emit(parent_path)
@@ -1309,7 +1396,9 @@ class SftpExplorer(QWidget):
                     self._disk_card.fill(self.disk_name, payload, warn, crit, self.disk_time)
             self.disk_updated.emit(payload)
         elif tag == "list":
-            path, entries, origin = payload
+            path, entries, origin, gen = payload
+            if origin != "refresh" and gen != self._nav_gen:
+                return              # the user (or the terminal) went somewhere else meanwhile: don't go back
             if origin == "user":
                 self._user_move = None          # the user's move is shown (its path may be written differently)
             if origin == "refresh" and path != self.cwd:
@@ -1330,7 +1419,7 @@ class SftpExplorer(QWidget):
             if item is not None:
                 self._populate(item, path)
                 if path == self.cwd:
-                    self.info.setText(tr("{n} items", n=self.item_count()))
+                    self._show_count()
                 if path in self._expanded and not item.isExpanded():   # opened before a refresh: open again
                     self._building += 1
                     item.setExpanded(True)
@@ -1348,7 +1437,8 @@ class SftpExplorer(QWidget):
         elif tag == "upload_check":
             self._upload_checked(*payload)
         elif tag == "upload":
-            self._done(tr("Upload complete"))
+            self._done("")
+            self.keep_info(tr("Upload complete → {path}", path=self._native(payload) if self.is_local else payload))
             self._listings.pop(payload, None)
             if payload == self.cwd or payload in self._expanded:
                 self.refresh()
@@ -1409,7 +1499,21 @@ class SftpExplorer(QWidget):
             if tag == "move":
                 self._listings.clear()
                 self.refresh()                  # some may have moved before the error
+            base = getattr(self.conn, "session", None)
+            if not self.is_local and base is not None and is_permission_error(msg):
+                if tell_permission(self, msg, f"{base.user}@{base.host}"):
+                    self.connect_as(base)
+                return
             QMessageBox.warning(self, tr("File operation failed"), msg)
+
+    def connect_as(self, base: Session) -> None:
+        """Open the same server as another account (asked here); a saved host for it is offered first."""
+        user, ok = QInputDialog.getText(self, tr("Connect as another account"),
+                                        tr("Account on {host}:", host=base.host))
+        user = user.strip() if ok else ""
+        if user:
+            self.connect_as_requested.emit(Session(host=base.host, port=base.port, user=user, jump=base.jump,
+                                                   encoding=base.encoding, group=base.group))
 
     def _on_progress(self, label: str, done: int, total: int):
         self.bar.show()
@@ -1449,6 +1553,20 @@ class SftpExplorer(QWidget):
     def _on_note(self, text: str):
         self.cancel_btn.show()
         self.info.setText(text)
+
+    def keep_info(self, text: str, seconds: float = 8) -> None:
+        """Show ``text`` below the list and keep it over the refreshes that follow for a few seconds."""
+        self.info.setText(text)
+        self._keep_info = (text, time.time() + seconds)
+
+    def _show_count(self, n: int | None = None) -> None:
+        """The number of items below the list, unless a result was just shown there (it stays a few seconds)."""
+        keep = self._keep_info
+        if keep is not None and time.time() < keep[1]:
+            self.info.setText(keep[0])
+            return
+        self._keep_info = None
+        self.info.setText(tr("{n} items", n=self.item_count() if n is None else n))
 
     def _done(self, msg: str):
         self.bar.hide()
@@ -1589,7 +1707,7 @@ class SftpExplorer(QWidget):
             item.setFont(COL_NAME, f)
         self.path_edit.setText(path)
         if path in self._listings or item is None:
-            self.info.setText(tr("{n} items", n=self.item_count()))
+            self._show_count()
         self._update_nav_buttons()
 
     def _select_location(self, scroll_top: bool = False) -> None:
@@ -1621,6 +1739,7 @@ class SftpExplorer(QWidget):
         else:
             folder, folder_item = (posixpath.dirname(path) or "/"), item.parent()
         if folder != self.cwd:
+            self._new_move()
             self._set_location(folder_item, folder)
 
     def _enter_in_place(self, item, path: str) -> None:
@@ -1630,6 +1749,7 @@ class SftpExplorer(QWidget):
             self.history.append(self.cwd)
             del self.history[:-50]
             self.forward.clear()
+        self._new_move()
         self._set_location(item, path)
         item.setExpanded(True)                 # loads it (one listing) if it isn't yet
         self.navigated.emit(path)
@@ -1724,7 +1844,7 @@ class SftpExplorer(QWidget):
             self._select_location(scroll_top=select is None)
         if select is not None:
             self.tree.scrollToItem(select)          # keep the folder we came from in view
-        self.info.setText(tr("{n} items", n=self.item_count()))
+        self._show_count()
         self._update_nav_buttons()
         self._fit_name_column()
 
@@ -1751,7 +1871,7 @@ class SftpExplorer(QWidget):
             self.tree.setCurrentItem(select)
             self.tree.scrollToItem(select)
         n = self.tree.topLevelItemCount()
-        self.info.setText(tr("{n} items", n=n))
+        self._show_count(n)
         self._update_nav_buttons()
 
     # ------------------------------------------------------------ actions
@@ -1858,20 +1978,23 @@ class SftpExplorer(QWidget):
             return
         self.transfer.submit("upload", job_upload(local_paths, remote_dir, skip))
 
+    def _drop_folder(self, target) -> str:
+        """The folder of a drop: a path (what the list showed while dragging), a folder row, or the current one."""
+        if isinstance(target, str) and target:
+            return target
+        if target is not None and not isinstance(target, str) and target.data(0, Qt.ItemDataRole.UserRole + 1):
+            return target.data(0, Qt.ItemDataRole.UserRole)
+        return self.cwd
+
     def _on_remote_dropped(self, source, target):
         """A server explorer's items were dropped here (this computer): it downloads them into the folder."""
-        folder = self.cwd
-        if target is not None and target.data(0, Qt.ItemDataRole.UserRole + 1):
-            folder = target.data(0, Qt.ItemDataRole.UserRole)
+        folder = self._drop_folder(target)
         native = self._native(folder)
         if native:
             source._internal_drop = (native, self)
 
     def _on_dropped(self, paths: list, target):
-        remote_dir = self.cwd
-        if target is not None and target.data(0, Qt.ItemDataRole.UserRole + 1):
-            remote_dir = target.data(0, Qt.ItemDataRole.UserRole)
-        self.upload(paths, remote_dir)
+        self.upload(paths, self._drop_folder(target))
 
     # ------------------------------------------------------------ drag-out download
     def _start_drag_out(self):

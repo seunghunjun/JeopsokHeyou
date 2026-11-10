@@ -250,11 +250,12 @@ class TerminalPane(TerminalWidget):
             self._late_cd = None
         if not self.chan or self.disconnected:
             return "offline"
-        if path == self.cwd:
-            return "same"
         if self._hiding or self._inject_state in ("waiting", "injecting"):
-            self._pending_cd = path   # Continue once the previous job finishes
+            self._pending_cd = path   # Continue once the previous job finishes (even back to where it is now)
             return "queued"
+        if path == self.cwd:
+            self._pending_cd = None
+            return "same"
         if self._inject_state != "done" or not self.cwd:
             return "unsupported"      # Shell does not send OSC 7 (not bash/zsh)
         if self.screen.alt is not None or not self.at_prompt:
@@ -424,6 +425,7 @@ class SessionTab(QWidget):
         self.explorer.follow_chk.setChecked(session.follow_cwd)
         self.explorer.cd_requested.connect(self._cd)
         self.explorer.navigated.connect(self._sync_terminal)
+        self.explorer.connect_as_requested.connect(main.open_quick)
         self.explorer.disk_name = session.name
         self.explorer.disk_updated.connect(lambda _s: self.update_disk_banner())
         self.term_split = QSplitter(Qt.Orientation.Horizontal)
@@ -613,9 +615,13 @@ class SessionTab(QWidget):
             p.frame.bar.set_active(p is pane)
         ex = self._explorer_for(pane)
         if ex is self.explorer:
+            before = getattr(self, "_tab_pane", None)
             self._tab_pane = pane
         else:
+            before = pane.window().active_pane
             pane.window().active_pane = pane
+        if before is pane:
+            return      # the same terminal again (back from another program or tab): the explorer stays where it is
         # In split view, clicking another terminal moves the explorer to that terminal's location — not while
         # this terminal is still on its way to where the explorer just went (its location is out of date)
         catching_up = (pane._pending_cd or pane._hiding == "cd" or pane._late_cd is not None
@@ -654,7 +660,7 @@ class SessionTab(QWidget):
             return
         msg = self.SYNC_MSG.get(pane.sync_cd(path))
         if msg:
-            explorer.info.setText(tr(msg))
+            explorer.keep_info(tr(msg))     # stays readable (the listing that follows would replace it at once)
 
     # ------------------------------------------------------------ moving panes (drag the grip)
     def _take_out(self, pane: TerminalPane) -> None:
@@ -788,6 +794,12 @@ class SessionTab(QWidget):
         for p in self.panes:
             p.close_btn.setVisible(True)
             p.frame.bar.set_active(p is self.active)
+        # title bars only on terminals side by side in the tab: alone, the tab says what it is (its X closes it,
+        # dragging the tab moves it); a terminal in its own window has none (the window has its title)
+        shown = bool(self.main.settings.get("pane_title_bar", True))
+        here = [p for p in self.panes if self._explorer_for(p) is self.explorer]
+        for p in self.panes:
+            p.frame.bar.setVisible(shown and p in here and len(here) > 1)
 
     def _pane_closed(self, pane: TerminalPane):
         if pane not in self.panes:
@@ -1263,6 +1275,9 @@ class MainWindow(QMainWindow):
             return b
         def tip(label, sid):
             return f"{tr(label)} ({shortcuts.text(sid, first_only=True)})"
+        gap = QWidget()
+        gap.setFixedWidth(5)                 # the toolbar's own padding is kept small (a lower toolbar)
+        tb.addWidget(gap)
         home_btn = tool("home", tip("Home", "home"), lambda: self.show_home()) if home else None
         tool("plus", tip("New session", "new_session"), self.new_session)
         term = tool("terminal", tip("New local terminal", "local_terminal"), lambda: self.open_local())
@@ -1493,8 +1508,8 @@ class MainWindow(QMainWindow):
             scheme = (self.settings.get("color_schemes") or {}).get(v["terminal_scheme"])
             detach.set_blocked_apps(v["drag_block_apps"])
             for tab in self.session_tabs():
+                tab._update_close_buttons()          # title bars (only where terminals are side by side)
                 for p in tab.panes:
-                    p.frame.bar.setVisible(v["pane_title_bar"])
                     p.screen.reflow = v["terminal_reflow"]
                     p.apply_scheme(scheme)
                     p.apply_highlights(self.settings)

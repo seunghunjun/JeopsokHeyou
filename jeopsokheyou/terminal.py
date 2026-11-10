@@ -45,6 +45,40 @@ SELECTION_BG = "#2F5C99"
 CURSOR_COLOR = "#F2F2F7"
 
 OSC7_RE = re.compile(r"\x1b\]7;([^\x07\x1b]*)(?:\x07|\x1b\\)")
+# CSI with a <, = or > marker (keyboard modes such as "CSI > 4 ; 2 m" that Claude Code sends): pyte drops the marker
+# and would take "4 ; 2 m" as underline + dim for everything after it
+PRIVATE_CSI_RE = re.compile(r"\x1b\[[<=>][0-9;:]*[ -/]*([@-~])")
+# SGR with ":" sub-parameters (curly underline "4:3", "38:2::r:g:b"): pyte prints them as text
+SGR_COLON_RE = re.compile(r"\x1b\[([0-9;]*:[0-9;:]*)m")
+# the start of an escape sequence at the very end of a chunk (finished by the next chunk)
+ESC_TAIL_RE = re.compile(r"\x1b(?:\[[0-9;:<=>?]*[ -/]*)?$")
+
+
+def _sgr_colon(m: re.Match) -> str:
+    out = []
+    for group in m.group(1).split(";"):
+        if ":" not in group:
+            out.append(group)
+            continue
+        sub = group.split(":")
+        if sub[0] == "4":                                   # underline style: 4:0 = off, others = on
+            out.append("24" if (sub[1] or "0") == "0" else "4")
+        elif sub[0] in ("38", "48") and sub[1] == "5" and len(sub) >= 3:
+            out.append(";".join((sub[0], "5", sub[2] or "0")))
+        elif sub[0] in ("38", "48") and sub[1] == "2" and len(sub) >= 5:
+            out.append(";".join([sub[0], "2"] + [v or "0" for v in sub[-3:]]))
+        # anything else (underline colour 58:..., unknown) is left out
+    out = [g for g in out if g != ""]
+    return "\x1b[" + ";".join(out) + "m" if out else ""
+
+
+def clean_sequences(text: str) -> str:
+    """Remove / rewrite the sequences pyte gets wrong (see PRIVATE_CSI_RE, SGR_COLON_RE). "CSI > c" (secondary device
+    attributes, sent by vim) is kept as it was."""
+    if "\x1b[" not in text:
+        return text
+    text = PRIVATE_CSI_RE.sub(lambda m: m.group(0) if m.group(1) == "c" else "", text)
+    return SGR_COLON_RE.sub(_sgr_colon, text)
 
 
 class TermScreen(pyte.Screen):
@@ -81,13 +115,30 @@ class TermScreen(pyte.Screen):
             self.buffer[self.cursor.y].wrapped = True
         super().linefeed()
 
+    # erased cells keep only the colours (as xterm does), not underline / bold / italics: otherwise a screen redrawn
+    # while underline is on is left with lines across the empty rows
+    def _blank_attrs(self):
+        c = self.cursor.attrs
+        return self.default_char._replace(fg=c.fg, bg=c.bg, reverse=c.reverse)
+
+    def _erase(self, fn, *args, **kwargs) -> None:
+        attrs = self.cursor.attrs
+        self.cursor.attrs = self._blank_attrs()
+        try:
+            fn(*args, **kwargs)
+        finally:
+            self.cursor.attrs = attrs
+
+    def erase_characters(self, count=None) -> None:
+        self._erase(super().erase_characters, count)
+
     def erase_in_line(self, how: int = 0, private: bool = False) -> None:
-        super().erase_in_line(how, private)
+        self._erase(super().erase_in_line, how, private)
         if how in (0, 2):   # the end of the row was cleared: it no longer continues on the next row
             self.buffer[self.cursor.y].wrapped = False
 
     def erase_in_display(self, how: int = 0, *args, **kwargs) -> None:
-        super().erase_in_display(how, *args, **kwargs)
+        self._erase(super().erase_in_display, how, *args, **kwargs)
         if how == 3:
             self.scrollback.clear()
 
@@ -294,6 +345,7 @@ class TerminalWidget(QWidget):
         self.stream = pyte.Stream(self.screen)
         self.set_encoding(encoding)
         self._osc_pending = ""
+        self._esc_pending = ""           # an escape sequence cut at the end of the last chunk
         # shell state (known only after receiving OSC 7 — when the bash/zsh hook was injected)
         self.cwd = ""
         self.at_prompt = False      # waiting for input at the prompt?
@@ -352,6 +404,10 @@ class TerminalWidget(QWidget):
         self._decoder = codecs.getincrementaldecoder(enc)(errors="replace")
 
     def set_font(self, font: QFont) -> None:
+        font = QFont(font)
+        # measure without the spacing fitted for the last scale (it was kept in term_font): otherwise each change of
+        # scale rounds the previous cell again and the letters end up squeezed together
+        font.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0)
         self.term_font = QFont(font)
         self.bold_font = QFont(font)
         self.bold_font.setBold(True)
@@ -382,13 +438,14 @@ class TerminalWidget(QWidget):
 
     # ------------------------------------------------------------ I/O
     def feed(self, data: bytes) -> None:
-        text = self._osc_pending + self._decoder.decode(data)
-        self._osc_pending = ""
+        held = len(self._esc_pending)      # already logged with the last chunk
+        text = self._esc_pending + self._osc_pending + self._decoder.decode(data)
+        self._osc_pending = self._esc_pending = ""
         if not text:
             return
         if self.logger is not None:
             try:
-                self.logger.write(text)
+                self.logger.write(text[held:])
             except OSError:
                 self.logger = None    # disk full / folder removed: stop logging, keep the session
         # an incomplete OSC 7 at the end of a chunk is joined with the next chunk
@@ -396,6 +453,11 @@ class TerminalWidget(QWidget):
         if tail >= 0 and OSC7_RE.match(text, tail) is None and len(text) - tail < 4096:
             self._osc_pending = text[tail:]
             text = text[:tail]
+        cut = None if self._osc_pending else ESC_TAIL_RE.search(text, max(0, len(text) - 64))
+        if cut is not None:                  # finish it with the next chunk, so it can be cleaned as a whole
+            self._esc_pending = text[cut.start():]
+            text = text[:cut.start()]
+        text = clean_sequences(text)
         before = self.screen.sb_total
         pos = 0
         for m in OSC7_RE.finditer(text):

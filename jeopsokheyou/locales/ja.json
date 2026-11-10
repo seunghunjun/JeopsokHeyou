@@ -410,7 +410,6 @@
   "Unlocked with recovery key": "回復キーでロックを解除しました",
   "Upload cancelled": "アップロードをキャンセルしました",
   "Upload changed file": "変更されたファイルのアップロード",
-  "Upload complete": "アップロード完了",
   "Uploading: {name}": "アップロード中: {name}",
   "Upload…": "アップロード…",
   "Upload… (you can also drag files in from {fm})": "アップロード…（{fm} からドラッグ＆ドロップもできます）",
@@ -622,5 +621,13 @@
   "{n} items copied — paste with {key}": "{n} 個の項目をコピーしました — {key} で貼り付け",
   "From another place a paste copies (the originals stay there)": "別の場所からの貼り付けはコピーになります (元のファイルは残ります)",
   "Cut": "切り取り",
-  "Paste into this folder": "このフォルダーに貼り付け"
+  "Paste into this folder": "このフォルダーに貼り付け",
+  "Account on {host}:": "{host} のアカウント:",
+  "Connect as another account": "別のアカウントで接続",
+  "Connect as another account…": "別のアカウントで接続…",
+  "Copy to: {path}": "コピー先: {path}",
+  "Move to: {path}": "移動先: {path}",
+  "Upload to: {path}": "アップロード先: {path}",
+  "Upload complete → {path}": "アップロード完了 → {path}",
+  "The explorer works as {who}. su or sudo in the terminal does not change that (and after su the explorer no longer follows the terminal's folder). To work as another account, connect as that account.": "エクスプローラーは {who} として動作します。ターミナルで su や sudo を実行してもエクスプローラーの権限は変わりません(su の後はエクスプローラーがターミナルの場所にも追従しません)。別のアカウントで作業するには、そのアカウントで接続してください。"
 }

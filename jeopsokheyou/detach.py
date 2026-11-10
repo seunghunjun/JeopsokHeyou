@@ -255,6 +255,7 @@ class PaneWindow(QWidget):
         self.explorer.disk_name = tab.session.name
         self.explorer.navigated.connect(lambda path: tab._sync_terminal(path, self.explorer))
         self.explorer.cd_requested.connect(lambda path: tab._cd(path, self.explorer))
+        self.explorer.connect_as_requested.connect(tab.main.open_quick)
         self.explorer.setVisible(tab.main.explorer_shown(tab.main.tab_widget_of(tab)))
         self.body = QSplitter(Qt.Orientation.Horizontal)
         self.body.addWidget(self.explorer)

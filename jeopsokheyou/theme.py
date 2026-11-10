@@ -190,7 +190,8 @@ QMenu::item:disabled {{ color: {t.faint}; }}
 QMenu::separator {{ height: 1px; background: {t.sep}; margin: 5px 8px; }}
 
 /* toolbar */
-QToolBar {{ background: {t.toolbar}; border: none; border-bottom: 1px solid {t.sep}; padding: 6px 10px; spacing: 4px; }}
+QToolBar {{ background: {t.toolbar}; border: none; border-bottom: 1px solid {t.sep}; padding: 3px; spacing: 4px; }}
+QToolBar#quick QToolButton {{ padding: 2px 6px; }}
 QToolBar::separator {{ width: 1px; background: {t.sep}; margin: 4px 6px; }}
 QToolButton {{ background: transparent; border: none; border-radius: 6px; padding: 4px 6px; color: {t.text}; }}
 QToolButton:hover {{ background: {t.hover}; }}
@@ -239,7 +240,7 @@ QPushButton#Flat:hover {{ background: {t.hover}; color: {t.text}; }}
 /* tabs (Safari-style rounded tabs) */
 QTabWidget::pane {{ border: none; background: {t.content}; }}
 QTabBar {{ background: {t.toolbar}; }}
-QTabBar::tab {{ background: transparent; color: {t.muted}; padding: 5px 14px; margin: 5px 2px 5px 2px;
+QTabBar::tab {{ background: transparent; color: {t.muted}; padding: 4px 14px; margin: 3px 2px 3px 2px;
     border-radius: 7px; min-width: 60px; }}
 QTabBar::tab:hover {{ background: {t.hover}; color: {t.text}; }}
 QTabBar::tab:selected {{ background: {t.content}; color: {t.text}; border: 1px solid {t.sep}; }}
@@ -366,6 +367,7 @@ QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QSplitter::handle {{ background: {t.sep}; }}
 QSplitter::handle:horizontal {{ width: 1px; }}
 QSplitter::handle:vertical {{ height: 1px; }}
+#HostTreeSplit::handle:horizontal {{ width: 5px; background: transparent; border-left: 1px solid {t.sep}; }}
 QMainWindow::separator {{ background: {t.sep}; width: 1px; height: 1px; }}
 
 QProgressBar {{ background: {t.sep}; border: none; border-radius: 3px; max-height: 6px; }}
