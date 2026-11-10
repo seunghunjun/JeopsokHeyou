@@ -27,6 +27,8 @@ WIN = sys.platform == "win32"
 
 
 def check(name, ok, extra=""):
+    if callable(extra):                  # details computed (and printed) only when the check fails
+        extra = "" if ok else extra()
     print(("PASS " if ok else "FAIL ") + name, extra)
 
 
@@ -181,7 +183,8 @@ wait(lambda: False, 1.0)
 sel = [it.data(0, 0x0100) for it in ex.tree.selectedItems()]
 check("refresh keeps the selected file", sel == [vroot + "/f20.txt"], sel)
 check("... and the scroll position", ex.tree.verticalScrollBar().value() == before,
-      (ex.tree.verticalScrollBar().value(), before))
+      lambda: (ex.tree.verticalScrollBar().value(), before, ex.tree.verticalScrollBar().maximum(),
+               ex.tree.viewport().height(), ex.tree.visualItemRect(pick).getRect()))
 check("... and the location", ex.cwd == vroot, ex.cwd)
 open(os.path.join(root, "zz-new.txt"), "w", encoding="utf-8").write("x")
 wait(lambda: ex._find_item(vroot + "/zz-new.txt") is not None, 5)

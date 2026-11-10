@@ -1797,6 +1797,8 @@ class SftpExplorer(QWidget):
         """Put the selection and the scroll position back (items that are gone are simply not selected)."""
         from PySide6.QtCore import QItemSelectionModel
         self._building += 1                     # not a click: the location must not change
+        auto = self.tree.hasAutoScroll()
+        self.tree.setAutoScroll(False)          # making it current must not scroll it into view (by a pixel)
         try:
             cur = self._find_item(state["current"]) if state.get("current") else None
             if cur is not None:
@@ -1809,6 +1811,7 @@ class SftpExplorer(QWidget):
             self.tree.verticalScrollBar().setValue(state["scroll"])
             self.tree.horizontalScrollBar().setValue(state["hscroll"])
         finally:
+            self.tree.setAutoScroll(auto)
             self._building -= 1
 
     def _fill_tree(self, path: str, listings: dict, keep: dict | None = None):

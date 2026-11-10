@@ -13,9 +13,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # windows-latest: x64 | macos-14: Apple Silicon (arm64) | macos-15-intel: Intel (x86_64).
+        # windows-latest: x64 | macos-15: Apple Silicon (arm64) | macos-15-intel: Intel (x86_64).
         # (The macos-13 image was retired by GitHub; macos-15-intel is its Intel replacement.)
-        os: [windows-latest, macos-14, macos-15-intel]
+        os: [windows-latest, macos-15, macos-15-intel]
     runs-on: ${{ matrix.os }}
     env:
       QT_QPA_PLATFORM: offscreen
