@@ -26,6 +26,7 @@ mine = os.path.join(SP, "mine.txt")
 open(mine, "w", encoding="utf-8").write("from this computer")
 
 from PySide6.QtCore import QMimeData, QPointF, Qt, QUrl  # noqa: E402
+from PySide6.QtGui import QColor  # noqa: E402
 from PySide6.QtWidgets import QApplication, QMessageBox  # noqa: E402
 
 app = QApplication([])
@@ -49,6 +50,17 @@ def wait(cond, sec=10):
         if cond():
             return True
     return False
+
+
+def framed(item) -> bool:
+    """The drop frame (accent colour) is drawn at the left edge of the item's row."""
+    from jeopsokheyou import icons
+    app.processEvents()
+    img = ex.tree.viewport().grab().toImage()
+    rect = ex.tree.visualItemRect(item)
+    want = QColor(icons.theme.current().accent)
+    c = img.pixelColor(int(2 * img.devicePixelRatio()), int(rect.center().y() * img.devicePixelRatio()))
+    return abs(c.red() - want.red()) + abs(c.green() - want.green()) + abs(c.blue() - want.blue()) < 90
 
 
 class FakeDragEvent:
@@ -107,13 +119,13 @@ try:
     ex.tree.dragMoveEvent(ev)
     check("dragging over a file in a subfolder names that subfolder", ex.info.text() == "Upload to: /home/tester/sub",
           lambda: ex.info.text())
-    check("... and highlights the subfolder's row", ex.tree._marked is sub
-          and sub.background(0).style() != Qt.BrushStyle.NoBrush)
+    check("... and frames the subfolder's row on screen", ex.tree._marked is sub and framed(sub),
+          lambda: (ex.tree._marked, framed(sub)))
     top = ex._find_item("/home/tester/top.txt")
     ev2 = FakeDragEvent(ex.tree, top)
     ex.tree.dragMoveEvent(ev2)
     check("over a file of the current folder: the current folder", ex.info.text() == "Upload to: /home/tester"
-          and ex.tree._marked is not sub and sub.background(0).style() == Qt.BrushStyle.NoBrush,
+          and ex.tree._marked is not sub and not framed(sub),
           lambda: ex.info.text())
     ex.tree._hide_target()               # what leaving the list does
     check("leaving the list puts the status back and the highlight away", ex.info.text() == before

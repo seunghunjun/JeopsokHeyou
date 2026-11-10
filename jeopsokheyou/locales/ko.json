@@ -629,5 +629,10 @@
   "Move to: {path}": "옮길 위치: {path}",
   "Upload to: {path}": "올릴 위치: {path}",
   "Upload complete → {path}": "업로드 완료 → {path}",
-  "The explorer works as {who}. su or sudo in the terminal does not change that (and after su the explorer no longer follows the terminal's folder). To work as another account, connect as that account.": "탐색기는 {who} 계정으로 동작합니다. 터미널에서 su나 sudo를 해도 탐색기의 권한은 바뀌지 않습니다(su 이후에는 탐색기가 터미널 위치도 따라가지 않습니다). 다른 계정으로 작업하려면 그 계정으로 접속하세요."
+  "The explorer works as {who}. su or sudo in the terminal does not change that (and after su the explorer no longer follows the terminal's folder). To work as another account, connect as that account.": "탐색기는 {who} 계정으로 동작합니다. 터미널에서 su나 sudo를 해도 탐색기의 권한은 바뀌지 않습니다(su 이후에는 탐색기가 터미널 위치도 따라가지 않습니다). 다른 계정으로 작업하려면 그 계정으로 접속하세요.",
+  "Focus mode (menus and tabs hidden)": "집중 모드 (메뉴·탭 숨김)",
+  "Focus mode — {key} shows the menus and tabs again": "집중 모드 — {key}를 누르면 메뉴와 탭이 다시 나타납니다",
+  "Leave focus mode": "집중 모드 끝내기",
+  "Other connections": "다른 연결",
+  "Focus mode works on terminals": "집중 모드는 터미널에서 사용할 수 있습니다"
 }

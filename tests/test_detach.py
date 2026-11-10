@@ -259,7 +259,7 @@ try:
     detach.dragging["pane"] = None
     check("dropping it on the card docks it back", wait(lambda: t2.term_split.isAncestorOf(only))
           and t2.term_split.indexOf(card) < 0 and not w.tabs.tabText(w.tabs.indexOf(t2)).startswith("⧉")
-          and only.frame.bar.isHidden())         # alone in its tab again: no title bar
+          and only.frame.bar.isVisibleTo(only.frame))
     t2.float_pane(only, QPoint(320, 140))
     app.processEvents()
     t2.empty_card.new_btn.click()

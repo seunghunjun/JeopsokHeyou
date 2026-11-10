@@ -10,7 +10,7 @@ The connection is never touched: only widgets move.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QMimeData, QObject, QPoint, QSize, Qt
+from PySide6.QtCore import QMimeData, QObject, QPoint, QSize, Qt, QTimer
 from PySide6.QtGui import QAction, QCursor, QGuiApplication, QMouseEvent
 from PySide6.QtWidgets import (QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QMenu, QMenuBar,
                                QPushButton, QSizePolicy, QSplitter, QTabBar, QTabWidget, QToolButton, QVBoxLayout,
@@ -169,8 +169,10 @@ class TabWindow(QMainWindow):
         self.setCentralWidget(self.tabs)
         self.setWindowIcon(main.windowIcon())
         add_shortcuts(self, main)
-        add_menu_bar(self, main)
-        self.addToolBar(main.window_toolbar())
+        add_menu_bar(self, main).setCornerWidget(main.window_toolbar(), Qt.Corner.TopRightCorner)   # one row
+        main.apply_focus_mode(self)
+        self.tabs.currentChanged.connect(lambda _i: main.apply_focus_mode(self))
+        self.tabs.tabBar().tabMoved.connect(lambda *_a: main.refresh_focus_chips())
         self._closing_quietly = False
         self.docker = MoveDocker(self, self._target_at, self._show_target, self._dock)
 
@@ -270,7 +272,7 @@ class PaneWindow(QWidget):
         self.explorer.visibility_set.connect(lambda shown: self.explorer_strip.setVisible(not shown))
         self.explorer.hide_requested.connect(lambda: tab.main.toggle_explorer())
         self.active_pane = None             # the terminal of this window the explorer goes with
-        lay.addWidget(tab.main.window_toolbar())
+        toolbar = tab.main.window_toolbar()        # goes at the right end of the menu bar (one row)
         row = QWidget()
         rl = QHBoxLayout(row)
         rl.setContentsMargins(0, 0, 0, 0)
@@ -281,7 +283,9 @@ class PaneWindow(QWidget):
         self.setWindowTitle(f"{tab.session.title()} — JeopsokHeyou")
         self.setWindowIcon(tab.main.windowIcon())
         add_shortcuts(self, tab.main)
-        add_menu_bar(self, tab.main)
+        self.menu_bar = add_menu_bar(self, tab.main)
+        self.menu_bar.setCornerWidget(toolbar, Qt.Corner.TopRightCorner)
+        tab.main.apply_focus_mode(self)
         self._closing_quietly = False
         self.docker = MoveDocker(self, self._target_at, self._show_target, self._dock)
 
@@ -377,7 +381,7 @@ class PaneBar(QFrame):
         super().__init__()
         self.pane = pane
         self.setObjectName("PaneBar")
-        self.setFixedHeight(28)
+        self.setFixedHeight(22)
         self.setToolTip(tr("Drag to move this terminal: onto another terminal to dock it, "
                            "or outside the window to open it in its own window. Double-click to fill the tab."))
         lay = QHBoxLayout(self)
@@ -395,8 +399,29 @@ class PaneBar(QFrame):
         self.close_btn.setAutoRaise(True)
         self.close_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.close_btn.clicked.connect(lambda: pane.close_requested.emit(pane))
+        # shown in focus mode only: the way back (the menus are hidden then)
+        from . import icons, shortcuts
+        self.focus_btn = QToolButton()
+        self.focus_btn.setObjectName("PaneButton")
+        icons.bind(self.focus_btn, "unfocus")
+        self.focus_btn.setIconSize(QSize(14, 14))
+        self.focus_btn.setToolTip(tr("Leave focus mode") + f" ({shortcuts.text('focus_mode', first_only=True)})")
+        self.focus_btn.setAutoRaise(True)
+        self.focus_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.focus_btn.hide()
+        self.focus_btn.clicked.connect(lambda: pane.owner_tab.main.toggle_focus_mode(False))
+        # focus mode: the open connections of the window (tabs hidden then), on its top-left terminal only
+        self.chips = QWidget()
+        self.chips_lay = QHBoxLayout(self.chips)
+        self.chips_lay.setContentsMargins(0, 0, 0, 0)
+        self.chips_lay.setSpacing(2)
+        self.chips.hide()
+        self._chip_items: list = []
+        self._chip_width = -1
         lay.addWidget(grip)
         lay.addWidget(self.title, 1)
+        lay.addWidget(self.chips)
+        lay.addWidget(self.focus_btn)
         lay.addWidget(self.close_btn)
         self._full = ""
         self._press: QPoint | None = None
@@ -412,6 +437,61 @@ class PaneBar(QFrame):
     def resizeEvent(self, e):
         super().resizeEvent(e)
         self._elide()
+        if self._chip_items and abs(self.width() - self._chip_width) > 20:
+            QTimer.singleShot(0, lambda: self.set_chips(self._chip_items))   # fit them to the new width
+
+    def set_chips(self, items: list) -> None:
+        """(name, current, pick[, icon]) for each entry (Home first, then the open connections); the connections
+        that don't fit go under a "+N" button."""
+        while self.chips_lay.count():
+            w = self.chips_lay.takeAt(0).widget()
+            if w is not None:
+                w.setParent(None)        # gone at once (not only once the event loop deletes it)
+                w.deleteLater()
+        self._chip_items = list(items)
+        self._chip_width = self.width()
+        if not items:
+            self.chips.hide()
+            return
+        from . import icons
+        budget = max(160, int(self.width() * 0.6))
+        used, extra = 0, []
+        for name, current, pick, *icon in items:
+            b = QToolButton()
+            b.setObjectName("FocusChip")
+            if icon:                         # Home: its icon only (always shown)
+                icons.bind(b, icon[0])
+                b.setIconSize(QSize(13, 13))
+            else:
+                b.setText(name)
+                b.setCheckable(True)
+                b.setChecked(current)
+            b.setFixedHeight(18)
+            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            b.setToolTip(name)
+            width = b.sizeHint().width() + 2
+            if used + width > budget and not current and not icon:
+                b.setParent(None)
+                b.deleteLater()
+                extra.append((name, pick))
+                continue
+            used += width
+            b.clicked.connect(lambda _c=False, b=b, pick=pick: (b.setChecked(b.isCheckable()), pick()))
+            self.chips_lay.addWidget(b)
+        if extra:
+            more = QToolButton()
+            more.setObjectName("FocusChip")
+            more.setText(f"+{len(extra)}")
+            more.setFixedHeight(18)
+            more.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            more.setToolTip(tr("Other connections"))
+            more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            menu = QMenu(more)
+            for name, pick in extra:
+                menu.addAction(name, pick)
+            more.setMenu(menu)
+            self.chips_lay.addWidget(more)
+        self.chips.show()
 
     def set_active(self, on: bool) -> None:
         if bool(self.property("active")) != on:

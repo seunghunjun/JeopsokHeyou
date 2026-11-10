@@ -629,5 +629,10 @@
   "Move to: {path}": "移動先: {path}",
   "Upload to: {path}": "アップロード先: {path}",
   "Upload complete → {path}": "アップロード完了 → {path}",
-  "The explorer works as {who}. su or sudo in the terminal does not change that (and after su the explorer no longer follows the terminal's folder). To work as another account, connect as that account.": "エクスプローラーは {who} として動作します。ターミナルで su や sudo を実行してもエクスプローラーの権限は変わりません(su の後はエクスプローラーがターミナルの場所にも追従しません)。別のアカウントで作業するには、そのアカウントで接続してください。"
+  "The explorer works as {who}. su or sudo in the terminal does not change that (and after su the explorer no longer follows the terminal's folder). To work as another account, connect as that account.": "エクスプローラーは {who} として動作します。ターミナルで su や sudo を実行してもエクスプローラーの権限は変わりません(su の後はエクスプローラーがターミナルの場所にも追従しません)。別のアカウントで作業するには、そのアカウントで接続してください。",
+  "Focus mode (menus and tabs hidden)": "集中モード (メニュー・タブを非表示)",
+  "Focus mode — {key} shows the menus and tabs again": "集中モード — {key} でメニューとタブを再表示します",
+  "Leave focus mode": "集中モードを終了",
+  "Other connections": "その他の接続",
+  "Focus mode works on terminals": "集中モードはターミナルで使えます"
 }

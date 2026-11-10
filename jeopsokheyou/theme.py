@@ -192,6 +192,7 @@ QMenu::separator {{ height: 1px; background: {t.sep}; margin: 5px 8px; }}
 /* toolbar */
 QToolBar {{ background: {t.toolbar}; border: none; border-bottom: 1px solid {t.sep}; padding: 3px; spacing: 4px; }}
 QToolBar#quick QToolButton {{ padding: 2px 6px; }}
+QMenuBar QToolBar#quick QToolButton {{ padding: 1px 5px; }}
 QToolBar::separator {{ width: 1px; background: {t.sep}; margin: 4px 6px; }}
 QToolButton {{ background: transparent; border: none; border-radius: 6px; padding: 4px 6px; color: {t.text}; }}
 QToolButton:hover {{ background: {t.hover}; }}
@@ -240,7 +241,7 @@ QPushButton#Flat:hover {{ background: {t.hover}; color: {t.text}; }}
 /* tabs (Safari-style rounded tabs) */
 QTabWidget::pane {{ border: none; background: {t.content}; }}
 QTabBar {{ background: {t.toolbar}; }}
-QTabBar::tab {{ background: transparent; color: {t.muted}; padding: 4px 14px; margin: 3px 2px 3px 2px;
+QTabBar::tab {{ background: transparent; color: {t.muted}; padding: 3px 14px; margin: 2px 2px 2px 2px;
     border-radius: 7px; min-width: 60px; }}
 QTabBar::tab:hover {{ background: {t.hover}; color: {t.text}; }}
 QTabBar::tab:selected {{ background: {t.content}; color: {t.text}; border: 1px solid {t.sep}; }}
@@ -301,6 +302,10 @@ QLabel#Muted {{ color: {t.muted}; }}
 QLabel#DiskCardTitle {{ font-size: 15px; font-weight: 600; }}
 QFrame#PaneBar {{ background: {t.toolbar}; border-bottom: 1px solid {t.sep}; }}
 QFrame#PaneBar[active="true"] {{ border-bottom: 2px solid {t.accent}; }}
+QToolButton#FocusChip {{ padding: 0px 7px; border-radius: 4px; color: {t.muted}; background: {t.hover}; }}
+QToolButton#FocusChip:hover {{ color: {t.text}; }}
+QToolButton#FocusChip:checked {{ background: {t.accent}; color: {t.accent_text}; }}
+QToolButton#FocusChip::menu-indicator {{ image: none; width: 0px; }}
 QLabel#PaneTitle {{ color: {t.muted}; }}
 QLabel#PaneTitle[active="true"] {{ color: {t.text}; }}
 QLabel#PaneGrip {{ color: {t.faint}; }}

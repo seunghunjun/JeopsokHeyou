@@ -24,8 +24,8 @@ from pathlib import Path
 
 import paramiko
 from paramiko.sftp import CMD_EXTENDED, int64
-from PySide6.QtCore import QFileSystemWatcher, QMimeData, QSize, QThread, QTimer, QUrl, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QDrag, QGuiApplication, QKeySequence, QPalette
+from PySide6.QtCore import QFileSystemWatcher, QMimeData, QRectF, QSize, QThread, QTimer, QUrl, Qt, Signal
+from PySide6.QtGui import QColor, QDrag, QGuiApplication, QKeySequence, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (QAbstractItemView, QFileDialog, QHBoxLayout, QStackedLayout,
                                QHeaderView, QInputDialog, QLabel, QLineEdit, QMenu,
                                QMessageBox, QProgressBar, QStyle, QStyledItemDelegate, QToolButton, QTreeWidget,
@@ -824,6 +824,7 @@ class FileTree(QTreeWidget):
         super().__init__()
         self.explorer = None              # the explorer this list belongs to
         self._marked = None               # the folder row highlighted while something is dragged over the list
+        self._mark_all = False            # ... or the whole list (the current folder in the list view)
         self._info_before = None          # the explorer's status text before the drag named the target
         self.setAcceptDrops(True)
         self.setDragEnabled(True)
@@ -890,14 +891,10 @@ class FileTree(QTreeWidget):
         ex = self.explorer
         folder = self.folder_at(e.position().toPoint())
         it = ex._cwd_item if folder == ex.cwd else ex._find_item(folder)
-        if it is not self._marked:
-            self._unmark()
-            if it is not None:
-                color = QColor(self.palette().color(QPalette.ColorRole.Highlight))
-                color.setAlpha(90)
-                for c in range(self.columnCount()):
-                    it.setBackground(c, QBrush(color))
-                self._marked = it
+        whole = it is None and folder == ex.cwd            # the current folder has no row (list view): the whole list
+        if it is not self._marked or whole != self._mark_all:
+            self._marked, self._mark_all = it, whole
+            self.viewport().update()
         shown = ex._native(folder) if ex.is_local else folder
         if kind == "self":
             text = tr("Copy to: {path}", path=shown) if self.copy_key(e) else tr("Move to: {path}", path=shown)
@@ -910,13 +907,34 @@ class FileTree(QTreeWidget):
         ex.info.setText(text)
 
     def _unmark(self) -> None:
-        it, self._marked = self._marked, None
-        if it is not None:
-            try:
-                for c in range(self.columnCount()):
-                    it.setBackground(c, QBrush())
-            except RuntimeError:
-                pass                      # the list was rebuilt meanwhile
+        if self._marked is not None or self._mark_all:
+            self._marked, self._mark_all = None, False
+            self.viewport().update()
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if self._marked is None and not self._mark_all:
+            return
+        # the folder a drop goes into: a frame in the accent colour around its row (or around the whole list)
+        try:
+            rect = self.visualItemRect(self._marked) if self._marked is not None else self.viewport().rect()
+        except RuntimeError:              # the list was rebuilt meanwhile
+            self._marked = None
+            return
+        if rect.isEmpty():
+            return
+        if self._marked is not None:
+            rect.setLeft(1)
+            rect.setRight(self.viewport().width() - 2)
+        color = QColor(icons.theme.current().accent)
+        p = QPainter(self.viewport())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        fill = QColor(color)
+        fill.setAlpha(55)
+        p.setBrush(fill)
+        p.setPen(QPen(color, 2))
+        p.drawRoundedRect(QRectF(rect).adjusted(1, 1, -1, -1), 5, 5)
+        p.end()
 
     def _hide_target(self) -> None:
         self._unmark()
