@@ -35,6 +35,8 @@ LINE = {
                    '<rect x="3" y="13" width="18" height="7.5" rx="2"/><path d="M6.5 15.5l2 1.5-2 1.5"/>',
     "split_h": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M12 4.5v15"/>',
     "split_v": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M3 12h18"/>',
+    "focus": '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',          # corners out: focus mode
+    "unfocus": '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',        # corners in: leave it
     "sidebar": '<rect x="3" y="4.5" width="18" height="15" rx="2.5"/><path d="M9 4.5v15"/>',
     "plus": '<path d="M12 5v14M5 12h14"/>',
     "link": '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',

@@ -9,6 +9,7 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QActionGroup, QColor, QFont, QGuiApplication, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (QApplication, QDockWidget, QFontDialog, QFrame, QHBoxLayout, QLabel, QInputDialog, QLineEdit,
+                               QToolTip,
                                QMainWindow, QMenu, QMessageBox, QPushButton, QSizePolicy, QSplitter,
                                QToolBar, QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                                QWidget)
@@ -26,6 +27,8 @@ from .tunnels import (TunnelManager, ask_trust_host, error_text, import_mobaxter
                       jump_credentials)
 
 log = applog.get("session")
+# the toolbar inside the menu bar's row: no frame or padding of its own (the row stays low)
+CORNER_TOOLBAR = "QToolBar { background: transparent; border: none; padding: 0px; }"
 
 # Hook the shell (bash/zsh) so the terminal reports its current folder via OSC 7 on every cd.
 # The final printf doubles as the "injection done" marker and the initial location report.
@@ -250,11 +253,12 @@ class TerminalPane(TerminalWidget):
             self._late_cd = None
         if not self.chan or self.disconnected:
             return "offline"
-        if path == self.cwd:
-            return "same"
         if self._hiding or self._inject_state in ("waiting", "injecting"):
-            self._pending_cd = path   # Continue once the previous job finishes
+            self._pending_cd = path   # Continue once the previous job finishes (even back to where it is now)
             return "queued"
+        if path == self.cwd:
+            self._pending_cd = None
+            return "same"
         if self._inject_state != "done" or not self.cwd:
             return "unsupported"      # Shell does not send OSC 7 (not bash/zsh)
         if self.screen.alt is not None or not self.at_prompt:
@@ -424,6 +428,7 @@ class SessionTab(QWidget):
         self.explorer.follow_chk.setChecked(session.follow_cwd)
         self.explorer.cd_requested.connect(self._cd)
         self.explorer.navigated.connect(self._sync_terminal)
+        self.explorer.connect_as_requested.connect(main.open_quick)
         self.explorer.disk_name = session.name
         self.explorer.disk_updated.connect(lambda _s: self.update_disk_banner())
         self.term_split = QSplitter(Qt.Orientation.Horizontal)
@@ -613,9 +618,13 @@ class SessionTab(QWidget):
             p.frame.bar.set_active(p is pane)
         ex = self._explorer_for(pane)
         if ex is self.explorer:
+            before = getattr(self, "_tab_pane", None)
             self._tab_pane = pane
         else:
+            before = pane.window().active_pane
             pane.window().active_pane = pane
+        if before is pane:
+            return      # the same terminal again (back from another program or tab): the explorer stays where it is
         # In split view, clicking another terminal moves the explorer to that terminal's location — not while
         # this terminal is still on its way to where the explorer just went (its location is out of date)
         catching_up = (pane._pending_cd or pane._hiding == "cd" or pane._late_cd is not None
@@ -654,7 +663,7 @@ class SessionTab(QWidget):
             return
         msg = self.SYNC_MSG.get(pane.sync_cd(path))
         if msg:
-            explorer.info.setText(tr(msg))
+            explorer.keep_info(tr(msg))     # stays readable (the listing that follows would replace it at once)
 
     # ------------------------------------------------------------ moving panes (drag the grip)
     def _take_out(self, pane: TerminalPane) -> None:
@@ -788,6 +797,8 @@ class SessionTab(QWidget):
         for p in self.panes:
             p.close_btn.setVisible(True)
             p.frame.bar.set_active(p is self.active)
+            p.frame.bar.focus_btn.setVisible(self.main.focus_mode)    # a terminal added in focus mode too
+        self.main.refresh_focus_chips()          # the top-left terminal may have changed
 
     def _pane_closed(self, pane: TerminalPane):
         if pane not in self.panes:
@@ -1127,6 +1138,15 @@ class MainWindow(QMainWindow):
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tab_windows: list = []
         self.setCentralWidget(self.tabs)
+        self.focus_mode = False                  # menus and tabs hidden (not kept over a restart)
+        self._focus_keys = False
+        self._chips_timer = QTimer(self)         # the open connections on a title bar in focus mode
+        self._chips_timer.setSingleShot(True)
+        self._chips_timer.setInterval(0)
+        self._chips_timer.timeout.connect(self._fill_focus_chips)
+        self.tabs.currentChanged.connect(lambda _i: self.apply_focus_mode(self))
+        self.tabs.tabBar().tabMoved.connect(lambda *_a: self.refresh_focus_chips())
+        QApplication.instance().focusChanged.connect(self._sync_focus_ui)   # another window in use
 
         self._build_sessions_dock()
         self._build_toolbar()
@@ -1245,7 +1265,9 @@ class MainWindow(QMainWindow):
         self.quick.addAction(icons.line("bolt"), QLineEdit.ActionPosition.LeadingPosition)
         self.quick.returnPressed.connect(self.quick_connect)
         tb.addWidget(self.quick)
-        self.addToolBar(tb)
+        # the buttons sit at the right end of the menu bar: one row for both (more room for the terminals)
+        tb.setStyleSheet(CORNER_TOOLBAR)
+        self.menuBar().setCornerWidget(tb, Qt.Corner.TopRightCorner)
         self._toolbars = [tb]
         tb.setVisible(bool(self.settings.get("show_toolbar", True)))
         # unchecking it from the right-click menu is the same setting
@@ -1263,6 +1285,9 @@ class MainWindow(QMainWindow):
             return b
         def tip(label, sid):
             return f"{tr(label)} ({shortcuts.text(sid, first_only=True)})"
+        gap = QWidget()
+        gap.setFixedWidth(5)                 # the toolbar's own padding is kept small (a lower toolbar)
+        tb.addWidget(gap)
         home_btn = tool("home", tip("Home", "home"), lambda: self.show_home()) if home else None
         tool("plus", tip("New session", "new_session"), self.new_session)
         term = tool("terminal", tip("New local terminal", "local_terminal"), lambda: self.open_local())
@@ -1273,12 +1298,15 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tool("split_h", tip("Split left/right", "split_lr"), lambda: self.split(Qt.Orientation.Horizontal))
         tool("split_v", tip("Split top/bottom", "split_tb"), lambda: self.split(Qt.Orientation.Vertical))
+        tb.focus_btn = tool("focus", tip("Focus mode (menus and tabs hidden)", "focus_mode"),
+                            lambda: self.toggle_focus_mode())
         return home_btn
 
     def window_toolbar(self) -> QToolBar:
         """The main window's toolbar for a detached window."""
         tb = QToolBar(tr("Tools"))
         tb.setObjectName("quick")
+        tb.setStyleSheet(CORNER_TOOLBAR)
         tb.setMovable(False)
         tb.setIconSize(QSize(18, 18))
         self._toolbar_buttons(tb)
@@ -1365,6 +1393,9 @@ class MainWindow(QMainWindow):
         self.toolbar_act.setChecked(bool(self.settings.get("show_toolbar", True)))
         self.toolbar_act.triggered.connect(self.set_toolbar_shown)
         m.addAction(self.toolbar_act)
+        self.focus_act = self._act(m, tr("Focus mode (menus and tabs hidden)"), lambda: self.toggle_focus_mode(),
+                                   "focus_mode")
+        self.focus_act.setCheckable(True)
         m.addSeparator()
         self._act(m, tr("Font…"), self.choose_font)
         self._act(m, tr("Larger text"), lambda: self.zoom_font(1), "zoom_in")
@@ -2019,6 +2050,7 @@ class MainWindow(QMainWindow):
         tab.connect()
 
     def _on_tab_title(self, tab, text):
+        self.refresh_focus_chips()
         tabs = self.tab_widget_of(tab)
         idx = tabs.indexOf(tab) if tabs is not None else -1
         if idx >= 0:
@@ -2095,6 +2127,7 @@ class MainWindow(QMainWindow):
         tab.shutdown()
         tabs.removeTab(tabs.indexOf(tab))
         tab.deleteLater()
+        self.refresh_focus_chips()
 
     def current_tab(self) -> SessionTab | None:
         aw = QApplication.activeWindow()
@@ -2176,6 +2209,95 @@ class MainWindow(QMainWindow):
         if tabs is self.tabs:
             return bool(self.settings.get("show_explorer", True))
         return bool(getattr(tabs, "explorer_shown", True))
+
+    # ------------------------------------------------------------ focus mode: only the terminals (and explorer)
+    def toggle_focus_mode(self, on: bool | None = None) -> None:
+        """Hide the menu bar and the tab bars of every window (the same key brings them back)."""
+        on = not self.focus_mode if on is None else bool(on)
+        if on and not self._focus_keys:
+            # the menus' shortcuts keep working while the menu bar is hidden
+            for a in self.findChildren(QAction):
+                if not a.shortcut().isEmpty():
+                    self.addAction(a)
+            self._focus_keys = True
+        self.focus_mode = on
+        self._sync_focus_ui()
+        for win in [self] + list(self.tab_windows):
+            self.apply_focus_mode(win)
+        for tab in self.session_tabs():
+            for pw in tab.pane_windows:
+                self.apply_focus_mode(pw)
+            for p in tab.panes:
+                p.frame.bar.focus_btn.setVisible(on)
+        if on:
+            key = shortcuts.text("focus_mode", first_only=True)
+            w = self.window()
+            QToolTip.showText(w.mapToGlobal(QPoint(max(0, w.width() // 2 - 160), 8)),
+                              tr("Focus mode — {key} shows the menus and tabs again", key=key), w, QRect(), 4000)
+
+    def apply_focus_mode(self, win) -> None:
+        """A window's menu bar and tab bar follow focus mode (also a window opened while it is on). Only over
+        terminals: on Home there is no title bar to leave it from, so the menus and tabs stay."""
+        tabs = getattr(win, "tabs", None)
+        hide = self.focus_mode and (tabs is None or isinstance(tabs.currentWidget(), SessionTab))
+        bar = win.menuBar() if isinstance(win, QMainWindow) else getattr(win, "menu_bar", None)
+        if bar is not None:
+            bar.setVisible(not hide)
+        if tabs is not None:
+            tabs.tabBar().setVisible(not hide)
+        self.refresh_focus_chips()
+        self._sync_focus_ui()
+
+    def _focus_on_home(self) -> bool:
+        """The main window shows Home (not a terminal) and is the window in use: focus mode rests there."""
+        aw = QApplication.activeWindow()
+        return (aw is None or aw is self) and not isinstance(self.tabs.currentWidget(), SessionTab)
+
+    def _sync_focus_ui(self, *_a) -> None:
+        """Menu item and button: checked while focus mode is on over terminals; on Home it rests (unchecked,
+        greyed) and comes back with the next terminal."""
+        if not hasattr(self, "focus_act"):
+            return
+        home = self._focus_on_home()
+        self.focus_act.setEnabled(not home)
+        self.focus_act.setChecked(self.focus_mode and not home)
+        btn = getattr(self.main_toolbar, "focus_btn", None)
+        if btn is not None:
+            btn.setEnabled(not home)
+            key = shortcuts.text("focus_mode", first_only=True)
+            btn.setToolTip(tr("Focus mode works on terminals") if home
+                           else f"{tr('Focus mode (menus and tabs hidden)')} ({key})")
+
+    def refresh_focus_chips(self) -> None:
+        if hasattr(self, "_chips_timer"):
+            self._chips_timer.start()
+
+    def _fill_focus_chips(self) -> None:
+        """Focus mode: the open connections of each window, on the title bar of its top-left terminal (one place,
+        so a split tab does not show them twice)."""
+        for tab in self.session_tabs():
+            for p in tab.panes:
+                p.frame.bar.set_chips([])
+        if not self.focus_mode:
+            return
+        for tabs in self.tab_widgets():
+            cur = tabs.currentWidget()
+            if not isinstance(cur, SessionTab):
+                continue
+            here = [p for p in cur.panes if cur._explorer_for(p) is cur.explorer and p.frame.isVisible()]
+            if not here:
+                continue
+
+            def corner(p, cur=cur):
+                at = p.frame.mapTo(cur, QPoint(0, 0))
+                return at.y(), at.x()
+            first = min(here, key=corner)
+            items = [(tr("Home"), False, lambda _c=False: self.show_home(page=""), "home")]   # the way to Home
+            for i in range(tabs.count()):
+                w = tabs.widget(i)
+                if isinstance(w, SessionTab):
+                    items.append((tabs.tabText(i), w is cur, lambda _c=False, t=tabs, w=w: t.setCurrentWidget(w)))
+            first.frame.bar.set_chips(items)
 
     def toggle_explorer(self):
         """Show or hide the explorer in the active window only (the main window or a separate one)."""

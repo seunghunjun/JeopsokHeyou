@@ -29,6 +29,7 @@ KEYS: dict[str, tuple[list[str], list[str]]] = {
     "home": (["Ctrl+Shift+H"], ["Ctrl+Shift+H"]),
     "explorer": (["Ctrl+Shift+B"], ["Ctrl+Shift+B"]),
     "sessions_panel": (["Ctrl+Shift+S"], ["Ctrl+Shift+S"]),
+    "focus_mode": (["Ctrl+Shift+M"], ["Ctrl+Shift+M"]),   # F11 belongs to programs on the server
     "zoom_in": (["Ctrl+=", "Ctrl++", "Ctrl+Shift+="], ["Ctrl+=", "Ctrl++"]),
     "zoom_out": (["Ctrl+-", "Ctrl+Shift+-"], ["Ctrl+-"]),
     "settings": (["Ctrl+,"], ["Ctrl+,"]),
@@ -49,7 +50,8 @@ SECTIONS = [
     ("Terminal", [("Find in the terminal", "find"), ("Snippets", "snippets"),
                   ("Larger text", "zoom_in"), ("Smaller text", "zoom_out")]),
     ("View and tools", [("Home", "home"), ("Show/hide SFTP explorer", "explorer"),
-                        ("Session list panel", "sessions_panel"), ("Port forwarding", "port_forwarding"),
+                        ("Session list panel", "sessions_panel"),
+                        ("Focus mode (menus and tabs hidden)", "focus_mode"), ("Port forwarding", "port_forwarding"),
                         ("Settings", "settings"), ("Keyboard shortcuts", "shortcuts")]),
 ]
 
