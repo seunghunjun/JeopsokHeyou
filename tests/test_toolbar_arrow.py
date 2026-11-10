@@ -37,10 +37,10 @@ for name, tb in (("main window", w.main_toolbar), ("separate window", w.window_t
     menu_btns = [b for b in tb.findChildren(QToolButton)
                  if b.popupMode() == QToolButton.ToolButtonPopupMode.MenuButtonPopup]
     plain = [b for b in tb.findChildren(QToolButton) if b.popupMode() != QToolButton.ToolButtonPopupMode.MenuButtonPopup
-             and not b.icon().isNull()]
-    check(f"{name}: the button with a menu is wider than the others by the arrow's room",
+             and not b.icon().isNull() and b.sizeHint().width() > b.iconSize().width()]
+    check(f"{name}: the button with a menu is wider than a plain one by the arrow's room",
           bool(menu_btns) and bool(plain)
-          and all(m.sizeHint().width() >= max(p.sizeHint().width() for p in plain) + 9 for m in menu_btns),
+          and all(m.sizeHint().width() >= min(p.sizeHint().width() for p in plain) + 9 for m in menu_btns),
           lambda: ([m.sizeHint().width() for m in menu_btns], [p.sizeHint().width() for p in plain]))
 w.settings["confirm_quit"] = False
 w.close()

@@ -2258,15 +2258,18 @@ class MainWindow(QMainWindow):
         greyed) and comes back with the next terminal."""
         if not hasattr(self, "focus_act"):
             return
-        home = self._focus_on_home()
-        self.focus_act.setEnabled(not home)
-        self.focus_act.setChecked(self.focus_mode and not home)
-        btn = getattr(self.main_toolbar, "focus_btn", None)
-        if btn is not None:
-            btn.setEnabled(not home)
-            key = shortcuts.text("focus_mode", first_only=True)
-            btn.setToolTip(tr("Focus mode works on terminals") if home
-                           else f"{tr('Focus mode (menus and tabs hidden)')} ({key})")
+        try:
+            home = self._focus_on_home()
+            self.focus_act.setEnabled(not home)
+            self.focus_act.setChecked(self.focus_mode and not home)
+            btn = getattr(self.main_toolbar, "focus_btn", None)
+            if btn is not None:
+                btn.setEnabled(not home)
+                key = shortcuts.text("focus_mode", first_only=True)
+                btn.setToolTip(tr("Focus mode works on terminals") if home
+                               else f"{tr('Focus mode (menus and tabs hidden)')} ({key})")
+        except RuntimeError:
+            pass        # the window is closing (the focus moves while its widgets are already gone)
 
     def refresh_focus_chips(self) -> None:
         if hasattr(self, "_chips_timer"):
