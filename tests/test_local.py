@@ -6,7 +6,6 @@ import os
 import shutil
 import sys
 import time
-import traceback
 
 TESTS = os.path.dirname(os.path.abspath(__file__))
 SP = os.path.join(TESTS, ".work", "local")
@@ -180,17 +179,15 @@ pick.setSelected(True)
 ex.tree.verticalScrollBar().setValue(ex.tree.verticalScrollBar().maximum())
 before = ex.tree.verticalScrollBar().value()
 max_before = ex.tree.verticalScrollBar().maximum()
-log_scroll = []                        # what moved it, if it moves (printed when the check fails)
-ex.tree.verticalScrollBar().valueChanged.connect(
-    lambda v: log_scroll.append((v, ex.tree.verticalScrollBar().maximum(),
-                                 "|".join(f"{f.name}:{f.lineno}" for f in traceback.extract_stack()[-6:-1]))))
 ex.refresh()
 wait(lambda: False, 1.0)
 sel = [it.data(0, 0x0100) for it in ex.tree.selectedItems()]
 check("refresh keeps the selected file", sel == [vroot + "/f20.txt"], sel)
-check("... and the scroll position", ex.tree.verticalScrollBar().value() == before,
-      lambda: (ex.tree.verticalScrollBar().value(), before, ex.tree.verticalScrollBar().maximum(),
-               max_before, ex.tree.viewport().height(), ex.tree.verticalScrollMode(), log_scroll))
+sb = ex.tree.verticalScrollBar()
+# the same place; or, at the end before, still at the end (the list may have got a row taller meanwhile, e.g.
+# when the name column was fitted again and the horizontal scroll bar went away)
+check("... and the scroll position", sb.value() == before or (before == max_before and sb.value() == sb.maximum()),
+      lambda: (sb.value(), before, sb.maximum(), max_before))
 check("... and the location", ex.cwd == vroot, ex.cwd)
 open(os.path.join(root, "zz-new.txt"), "w", encoding="utf-8").write("x")
 wait(lambda: ex._find_item(vroot + "/zz-new.txt") is not None, 5)
