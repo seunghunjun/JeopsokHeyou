@@ -27,6 +27,8 @@ WIN = sys.platform == "win32"
 
 
 def check(name, ok, extra=""):
+    if callable(extra):                  # details computed (and printed) only when the check fails
+        extra = "" if ok else extra()
     print(("PASS " if ok else "FAIL ") + name, extra)
 
 
@@ -176,12 +178,16 @@ ex.tree.setCurrentItem(pick)
 pick.setSelected(True)
 ex.tree.verticalScrollBar().setValue(ex.tree.verticalScrollBar().maximum())
 before = ex.tree.verticalScrollBar().value()
+max_before = ex.tree.verticalScrollBar().maximum()
 ex.refresh()
 wait(lambda: False, 1.0)
 sel = [it.data(0, 0x0100) for it in ex.tree.selectedItems()]
 check("refresh keeps the selected file", sel == [vroot + "/f20.txt"], sel)
-check("... and the scroll position", ex.tree.verticalScrollBar().value() == before,
-      (ex.tree.verticalScrollBar().value(), before))
+sb = ex.tree.verticalScrollBar()
+# the same place; or, at the end before, still at the end (the list may have got a row taller meanwhile, e.g.
+# when the name column was fitted again and the horizontal scroll bar went away)
+check("... and the scroll position", sb.value() == before or (before == max_before and sb.value() == sb.maximum()),
+      lambda: (sb.value(), before, sb.maximum(), max_before))
 check("... and the location", ex.cwd == vroot, ex.cwd)
 open(os.path.join(root, "zz-new.txt"), "w", encoding="utf-8").write("x")
 wait(lambda: ex._find_item(vroot + "/zz-new.txt") is not None, 5)
